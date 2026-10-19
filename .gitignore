@@ -1,0 +1,10 @@
+build/
+bin/
+*.o
+*.obj
+*.exe
+*.deflate
+*.whl
+third_party/ffmpeg.exe
+third_party/ffmpeg.zip
+_probe/
