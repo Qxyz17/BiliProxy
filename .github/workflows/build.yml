@@ -1,0 +1,54 @@
+name: build
+
+on:
+  push:
+    branches: [master, main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-brotli
+            make
+
+      - name: fetch ffmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force third_party | Out-Null
+          if (-not (Test-Path 'third_party\ffmpeg.exe')) {
+            pwsh -ExecutionPolicy Bypass -File tools/download-ffmpeg.ps1
+            Expand-Archive -Path 'third_party\ffmpeg.zip' -DestinationPath 'third_party\fftmp' -Force
+            $exe = Get-ChildItem 'third_party\fftmp' -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+            if (-not $exe) { throw 'ffmpeg.exe not found in archive' }
+            Copy-Item $exe.FullName 'third_party\ffmpeg.exe' -Force
+            Remove-Item 'third_party\fftmp' -Recurse -Force
+          }
+          Get-Item 'third_party\ffmpeg.exe' | Select-Object Name, Length
+
+      - name: build
+        shell: pwsh
+        run: |
+          $env:Path = 'C:\msys64\mingw64\bin;' + $env:Path
+          pwsh -ExecutionPolicy Bypass -File build.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BiliProxy-${{ github.ref_name }}
+          path: |
+            bin/BiliProxy.exe
+            bin/BiliProxy-console.exe
+          if-no-files-found: error
