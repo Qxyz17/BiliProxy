@@ -26,14 +26,6 @@ jobs:
             mingw-w64-x86_64-brotli
             make
 
-      - name: locate msys2
-        shell: pwsh
-        run: |
-          Write-Host "msys2-location=${{ steps.msys2.outputs.msys2-location }}"
-          Get-ChildItem C:\msys64 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
-          Get-ChildItem C:\msys64\mingw64\bin\*objcopy* -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
-          Get-ChildItem C:\msys64\mingw64\bin\*g++* -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
-
       - name: fetch ffmpeg
         shell: pwsh
         run: |
@@ -51,8 +43,9 @@ jobs:
 
       - name: build
         shell: pwsh
+        env:
+          MSYS2_BIN: ${{ steps.msys2.outputs.msys2-location }}\mingw64\bin
         run: |
-          $env:Path = 'C:\msys64\mingw64\bin;' + $env:Path
           pwsh -ExecutionPolicy Bypass -File build.ps1
 
       - uses: actions/upload-artifact@v4

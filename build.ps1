@@ -7,9 +7,10 @@ $exe  = Join-Path $root 'bin\BiliProxy.exe'
 
 New-Item -ItemType Directory -Force $obj, (Join-Path $root 'bin') | Out-Null
 
-$env:Path = 'C:\msys64\mingw64\bin;' + $env:Path
-$gpp  = 'C:\msys64\mingw64\bin\g++.exe'
-$objcopy = 'C:\msys64\mingw64\bin\objcopy.exe'
+$msysBin = if ($env:MSYS2_BIN) { $env:MSYS2_BIN } else { 'C:\msys64\mingw64\bin' }
+$env:Path = "$msysBin;" + $env:Path
+$gpp  = Join-Path $msysBin 'g++.exe'
+$objcopy = Join-Path $msysBin 'objcopy.exe'
 $units = @('common','cert','config','http','playurl','proxy','gui','main','overlay','transcode','ffmpeg_embed','download')
 $libs = @('-lssl','-lcrypto','-lz','-lbrotlidec','-lbrotlicommon',
           '-lws2_32','-lcrypt32','-lwininet','-lsecur32','-lole32','-lshell32','-luser32','-ladvapi32','-lgdiplus','-lgdi32','-ld3d11','-ld2d1','-ldcomp','-ldxgi','-ldxguid','-lwindowscodecs','-luuid','-lcomdlg32')
