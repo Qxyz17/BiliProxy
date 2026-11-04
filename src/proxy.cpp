@@ -323,6 +323,14 @@ static void serveTls(SSL* ssl, const std::string& host) {
                 Log("strip fnval av1 bit: %s", t2.c_str());
             }
         }
+        // www 页面注入依赖 200 全量响应体，条件请求回 304 时浏览器会拿旧缓存，剥掉让它每次都回 200
+        if (host == "www.bilibili.com") {
+            for (auto it = hs.begin(); it != hs.end();) {
+                std::string n = lower(it->name);
+                if (n == "if-none-match" || n == "if-modified-since") it = hs.erase(it);
+                else ++it;
+            }
+        }
         if (!upstreamRequest(host, 443, method, upTarget, version, hs, body, statusLine, rh, rbody)) {
             std::string err = "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
             sslWriteAll(ssl, err);
