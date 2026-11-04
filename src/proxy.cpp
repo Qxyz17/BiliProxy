@@ -209,6 +209,20 @@ static std::string buildResponse(const std::string& statusLine, std::vector<Head
 }
 
 
+static std::string jsonEsc(const std::string& s) {
+    std::string o;
+    o.reserve(s.size() + 8);
+    for (unsigned char c : s) {
+        if (c == '"' || c == '\\') { o += '\\'; o += (char)c; }
+        else if (c == '\n') o += "\\n";
+        else if (c == '\r') o += "\\r";
+        else if (c == '\t') o += "\\t";
+        else if (c < 0x20) { char b[8]; sprintf(b, "\\u%04x", c); o += b; }
+        else o += (char)c;
+    }
+    return o;
+}
+
 static void serveTls(SSL* ssl, const std::string& host) {
     Conn c{ ssl, {} };
     for (;;) {
@@ -250,11 +264,11 @@ static void serveTls(SSL* ssl, const std::string& host) {
                 if (!DlGet(id, &j)) jr = "{\"ok\":false}";
                 else jr = "{\"ok\":true,\"state\":" + std::to_string(j.state) +
                           ",\"pct\":" + std::to_string(j.percent) +
-                          ",\"out\":\"" + U8(j.out) + "\",\"note\":\"" + U8(j.note) + "\"}";
+                          ",\"out\":\"" + jsonEsc(U8(j.out)) + "\",\"note\":\"" + jsonEsc(U8(j.note)) + "\"}";
             } else {
                 std::wstring err;
                 int id = DlStart(atoi(param("wm").c_str()) ? 1 : 0, param("name"), err);
-                jr = id < 0 ? "{\"ok\":false,\"msg\":\"" + U8(err) + "\"}"
+                jr = id < 0 ? "{\"ok\":false,\"msg\":\"" + jsonEsc(U8(err)) + "\"}"
                             : "{\"ok\":true,\"id\":" + std::to_string(id) + "}";
             }
             std::string resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"

@@ -39,7 +39,29 @@ static std::string JsonStr(const std::string& obj, const char* key) {
     if (q == std::string::npos) return {};
     std::string v;
     for (size_t i = q + 1; i < obj.size(); ++i) {
-        if (obj[i] == '\\' && i + 1 < obj.size()) { v += obj[i + 1]; ++i; continue; }
+        if (obj[i] == '\\' && i + 1 < obj.size()) {
+            if (obj[i + 1] == 'u' && i + 5 < obj.size()) {
+                // \uXXXX 转义（B站把 & 写成 \u0026）
+                unsigned cp = 0;
+                bool good = true;
+                for (int k = 0; k < 4; ++k) {
+                    char c = obj[i + 2 + k];
+                    cp <<= 4;
+                    if (c >= '0' && c <= '9') cp |= (unsigned)(c - '0');
+                    else if (c >= 'a' && c <= 'f') cp |= (unsigned)(c - 'a' + 10);
+                    else if (c >= 'A' && c <= 'F') cp |= (unsigned)(c - 'A' + 10);
+                    else { good = false; break; }
+                }
+                if (good) {
+                    if (cp < 0x80) v += (char)cp;
+                    else if (cp < 0x800) { v += (char)(0xC0 | (cp >> 6)); v += (char)(0x80 | (cp & 0x3F)); }
+                    else { v += (char)(0xE0 | (cp >> 12)); v += (char)(0x80 | ((cp >> 6) & 0x3F)); v += (char)(0x80 | (cp & 0x3F)); }
+                    i += 5;
+                    continue;
+                }
+            }
+            v += obj[i + 1]; ++i; continue;
+        }
         if (obj[i] == '"') break;
         v += obj[i];
     }

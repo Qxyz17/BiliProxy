@@ -1,5 +1,7 @@
 #include "common.h"
 
+#include <io.h>
+
 const int      kPort     = 18080;
 const char*    kListen   = "127.0.0.1";
 const wchar_t* kRunValue = L"BiliProxy";
@@ -63,11 +65,26 @@ void Log(const char* fmt, ...) {
     char line[4300];
     snprintf(line, sizeof line, "%04d-%02d-%02d %02d:%02d:%02d.%03d %s\n",
              st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, buf);
-    if (g_logFile) {
-        fputs(line, g_logFile);
-        fflush(g_logFile);
-    }
     if (g_verbose) fputs(line, stderr);
+    if (!g_logFile) return;
+    // 最新在第0行：读回旧内容，新行放最前整体写回
+    std::string old;
+    {
+        fseek(g_logFile, 0, SEEK_END);
+        long total = ftell(g_logFile);
+        const long cap = 512 * 1024;
+        long from = total > cap ? total - cap : 0;
+        fseek(g_logFile, from, SEEK_SET);
+        char b[16384];
+        size_t r;
+        while ((r = fread(b, 1, sizeof b, g_logFile)) > 0) old.append(b, r);
+    }
+    std::string out(line);
+    out += old;
+    fseek(g_logFile, 0, SEEK_SET);
+    fwrite(out.data(), 1, out.size(), g_logFile);
+    _chsize_s(_fileno(g_logFile), (_fsize_t)out.size());
+    fflush(g_logFile);
 }
 
 void LogSslErr(const char* where) {
