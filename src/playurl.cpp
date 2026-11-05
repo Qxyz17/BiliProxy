@@ -1,5 +1,6 @@
 #include "common.h"
 #include "playurl.h"
+#include "taster_html.h"
 
 static int findCodecid(const std::string& obj) {
     size_t p = obj.find("\"codecid\"");
@@ -258,6 +259,50 @@ std::string injectDownload(const std::string& html) {
     if (p == std::string::npos) return html;
     std::string out = html;
     out.insert(p, kDownloadSnippet);
+    return out;
+}
+
+// 页面里没有 chrome.* 扩展 API，用 localStorage + 代理端点和原始 content.js 的调用对齐
+static const char* kTasterShim =
+    "<script>(function(){if(window.__btShim)return;window.__btShim=1;"
+    "var C=window.chrome||(window.chrome={});"
+    "var S=C.storage||(C.storage={});"
+    "var L=S.local||(S.local={});"
+    "function K(k){return 'bt:'+k;}"
+    "L.get=function(keys,cb){var out={};"
+    "var list=Array.isArray(keys)?keys:(typeof keys==='string'?[keys]:(keys?Object.keys(keys):[]));"
+    "try{for(var i=0;i<list.length;i++){var v=localStorage.getItem(K(list[i]));"
+    "if(v!==null)out[list[i]]=JSON.parse(v);}}catch(e){}"
+    "setTimeout(function(){cb(out);},0);};"
+    "L.set=function(obj,cb){try{for(var k in obj){"
+    "if(Object.prototype.hasOwnProperty.call(obj,k))localStorage.setItem(K(k),JSON.stringify(obj[k]));}}catch(e){}"
+    "setTimeout(function(){cb&&cb();},0);};"
+    "var R=C.runtime||(C.runtime={});"
+    "R.lastError=undefined;"
+    "R.sendMessage=function(msg,cb){cb=cb||function(){};"
+    "var done=function(r){setTimeout(function(){cb(r);},0);};"
+    "if(!msg)return done({ok:false,error:'empty'});"
+    "if(msg.type==='BILI_FETCH'){"
+    "fetch('/__biliproxy/fetch?url='+encodeURIComponent(msg.url),{credentials:'include'})"
+    ".then(function(r){return r.json();}).then(done)"
+    ".catch(function(e){done({ok:false,error:String(e&&e.message||e)});});return;}"
+    "if(msg.type==='AI_FETCH'){"
+    "fetch('/__biliproxy/ai',{method:'POST',headers:{'Content-Type':'application/json'},"
+    "body:JSON.stringify({url:msg.url,headers:msg.headers||{},body:msg.body||''})})"
+    ".then(function(r){return r.json();}).then(done)"
+    ".catch(function(e){done({ok:false,error:String(e&&e.message||e)});});return;}"
+    "done({ok:false,error:'unsupported'});};"
+    "})();</script>";
+
+std::string injectTaster(const std::string& html) {
+    size_t p = html.find("</body>");
+    if (p == std::string::npos) p = html.find("</html>");
+    if (p == std::string::npos) return html;
+    std::string blk = std::string("<style>") + kTasterCss + "</style>" +
+                      kTasterShim +
+                      std::string("<script>") + kTasterJs + "</script>";
+    std::string out = html;
+    out.insert(p, blk);
     return out;
 }
 

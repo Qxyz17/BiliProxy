@@ -223,6 +223,123 @@ static std::string jsonEsc(const std::string& s) {
     return o;
 }
 
+static std::string urlDecode(const std::string& v) {
+    std::string out;
+    out.reserve(v.size());
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (v[i] == '%' && i + 2 < v.size()) {
+            auto hex = [](char c) { return c >= '0' && c <= '9' ? c - '0'
+                                 : (c >= 'a' && c <= 'f' ? c - 'a' + 10 : c - 'A' + 10); };
+            out += (char)(hex(v[i + 1]) * 16 + hex(v[i + 2]));
+            i += 2;
+        } else if (v[i] == '+') out += ' ';
+        else out += v[i];
+    }
+    return out;
+}
+
+static std::string queryParam(const std::string& q, const char* k) {
+    std::string key = std::string(k) + "=";
+    size_t p = q.find(key);
+    if (p == std::string::npos) return {};
+    size_t e = q.find('&', p);
+    return urlDecode(q.substr(p + key.size(), e == std::string::npos ? std::string::npos : e - p - key.size()));
+}
+
+// 页面注入脚本没有扩展后台可用，请求从代理走，绕开页面的 CSP / CORS
+static bool fetchUrl(const std::string& url, const std::string& method,
+                     const std::vector<std::pair<std::string, std::string>>& headers,
+                     const std::string& reqBody, int& status, std::string& respBody) {
+    std::string scheme, rest;
+    if (url.rfind("https://", 0) == 0) { scheme = "https"; rest = url.substr(8); }
+    else if (url.rfind("http://", 0) == 0) { scheme = "http"; rest = url.substr(7); }
+    else return false;
+
+    std::string hostPort = rest.substr(0, rest.find('/'));
+    std::string target = rest.size() > hostPort.size() ? rest.substr(hostPort.size()) : "/";
+    std::string host = hostPort;
+    int port = scheme == "https" ? 443 : 80;
+    size_t colon = hostPort.rfind(':');
+    if (colon != std::string::npos) {
+        host = hostPort.substr(0, colon);
+        port = atoi(hostPort.substr(colon + 1).c_str());
+    }
+    if (host.empty()) return false;
+
+    SOCKET fd = connectTcp(host, port);
+    if (fd == INVALID_SOCKET) { Log("fetch connect failed %s:%d", host.c_str(), port); return false; }
+
+    SSL* up = nullptr;
+    if (scheme == "https") {
+        up = SSL_new(g_cliCtx);
+        SSL_set_tlsext_host_name(up, host.c_str());
+        SSL_set_fd(up, (int)fd);
+        static const unsigned char alpn[] = { 8, 'h','t','t','p','/','1','.','1' };
+        SSL_set_alpn_protos(up, alpn, sizeof alpn);
+        if (SSL_connect(up) != 1) {
+            LogSslErr("fetch SSL_connect");
+            SSL_free(up);
+            closesocket(fd);
+            return false;
+        }
+    }
+
+    std::string req = method + " " + target + " HTTP/1.1\r\n"
+                      "Host: " + hostPort + "\r\n";
+    for (auto& h : headers) req += h.first + ": " + h.second + "\r\n";
+    req += "Accept-Encoding: identity\r\nConnection: close\r\n\r\n";
+    req += reqBody;
+
+    auto writeAll = [&](const std::string& d) -> bool {
+        if (up) return sslWriteAll(up, d);
+        return sendAll(fd, d.data(), d.size());
+    };
+    auto readSome = [&](char* b, int n) -> int {
+        return up ? SSL_read(up, b, n) : recv(fd, b, n, 0);
+    };
+
+    bool ok = false;
+    if (writeAll(req)) {
+        std::string raw;
+        char buf[16384];
+        int r;
+        while ((r = readSome(buf, sizeof buf)) > 0) raw.append(buf, (size_t)r);
+        size_t hp = raw.find("\r\n\r\n");
+        if (hp != std::string::npos) {
+            std::string head = raw.substr(0, hp + 4);
+            std::string body = raw.substr(hp + 4);
+            std::string first;
+            std::vector<Header> rh;
+            if (parseHead(head, first, rh)) {
+                size_t sp = first.find(' ');
+                status = sp == std::string::npos ? 0 : atoi(first.substr(sp + 1).c_str());
+                if (lower(getHeader(rh, "transfer-encoding")).find("chunked") != std::string::npos) {
+                    std::string dec;
+                    size_t i = 0;
+                    for (;;) {
+                        size_t le = body.find("\r\n", i);
+                        if (le == std::string::npos) break;
+                        size_t semi = body.find(';', i);
+                        if (semi == std::string::npos || semi > le) semi = le;
+                        unsigned long sz = strtoul(body.substr(i, semi - i).c_str(), nullptr, 16);
+                        if (sz == 0) break;
+                        if (le + 2 + sz > body.size()) break;
+                        dec.append(body, le + 2, sz);
+                        i = le + 2 + sz + 2;
+                    }
+                    body.swap(dec);
+                }
+                respBody.swap(body);
+                ok = true;
+            }
+        }
+    }
+
+    if (up) { SSL_shutdown(up); SSL_free(up); }
+    closesocket(fd);
+    return ok;
+}
+
 static void serveTls(SSL* ssl, const std::string& host) {
     Conn c{ ssl, {} };
     for (;;) {
@@ -237,26 +354,28 @@ static void serveTls(SSL* ssl, const std::string& host) {
         ls >> method >> target >> version;
         if (method.empty()) break;
 
+        if (target.rfind("/__biliproxy/fetch", 0) == 0) {
+            std::string q = target.find('?') == std::string::npos ? "" : target.substr(target.find('?') + 1);
+            std::string url = queryParam(q, "url");
+            int st = 0;
+            std::string rb;
+            std::vector<std::pair<std::string, std::string>> hd{{"Referer", "https://www.bilibili.com/"}};
+            std::string jr;
+            if (url.empty() || !fetchUrl(url, "GET", hd, "", st, rb))
+                jr = "{\"ok\":false,\"error\":\"fetch failed\"}";
+            else
+                jr = "{\"ok\":" + std::string(st >= 200 && st < 400 ? "true" : "false") +
+                     ",\"status\":" + std::to_string(st) + ",\"text\":\"" + jsonEsc(rb) + "\"}";
+            std::string resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
+                               "Content-Length: " + std::to_string(jr.size()) +
+                               "\r\nCache-Control: no-store\r\nConnection: keep-alive\r\n\r\n" + jr;
+            if (!sslWriteAll(ssl, resp)) break;
+            continue;
+        }
+
         if (target.rfind("/__biliproxy/dl", 0) == 0) {
             std::string q = target.find('?') == std::string::npos ? "" : target.substr(target.find('?') + 1);
-            auto param = [&](const char* k) -> std::string {
-                std::string key = std::string(k) + "=";
-                size_t p = q.find(key);
-                if (p == std::string::npos) return {};
-                size_t e = q.find('&', p);
-                std::string v = q.substr(p + key.size(), e == std::string::npos ? std::string::npos : e - p - key.size());
-                std::string out;
-                for (size_t i = 0; i < v.size(); ++i) {
-                    if (v[i] == '%' && i + 2 < v.size()) {
-                        auto hex = [](char c) { return c >= '0' && c <= '9' ? c - '0'
-                                             : (c >= 'a' && c <= 'f' ? c - 'a' + 10 : c - 'A' + 10); };
-                        out += (char)(hex(v[i + 1]) * 16 + hex(v[i + 2]));
-                        i += 2;
-                    } else if (v[i] == '+') out += ' ';
-                    else out += v[i];
-                }
-                return out;
-            };
+            auto param = [&](const char* k) { return queryParam(q, k); };
             std::string jr;
             if (target.rfind("/__biliproxy/dlstatus", 0) == 0) {
                 int id = atoi(param("id").c_str());
@@ -309,6 +428,85 @@ static void serveTls(SSL* ssl, const std::string& host) {
             }
         } else if (!cl.empty()) {
             c.readN((size_t)_strtoui64(cl.c_str(), nullptr, 10), body);
+        }
+
+        if (target.rfind("/__biliproxy/ai", 0) == 0) {
+            auto jfield = [&](const char* k) -> std::string {
+                std::string key = std::string("\"") + k + "\":";
+                size_t p = body.find(key);
+                if (p == std::string::npos) return {};
+                p += key.size();
+                while (p < body.size() && (body[p] == ' ' || body[p] == '\t')) ++p;
+                if (p >= body.size() || body[p] != '"') return {};
+                ++p;
+                std::string out;
+                for (size_t i = p; i < body.size(); ++i) {
+                    if (body[i] == '\\' && i + 1 < body.size()) {
+                        char e = body[++i];
+                        if (e == 'n') out += '\n';
+                        else if (e == 'r') out += '\r';
+                        else if (e == 't') out += '\t';
+                        else if (e == 'u' && i + 4 < body.size()) {
+                            unsigned cp = (unsigned)strtoul(body.substr(i + 1, 4).c_str(), nullptr, 16);
+                            i += 4;
+                            if (cp < 0x80) out += (char)cp;
+                            else if (cp < 0x800) {
+                                out += (char)(0xC0 | (cp >> 6));
+                                out += (char)(0x80 | (cp & 0x3F));
+                            } else {
+                                out += (char)(0xE0 | (cp >> 12));
+                                out += (char)(0x80 | ((cp >> 6) & 0x3F));
+                                out += (char)(0x80 | (cp & 0x3F));
+                            }
+                        } else out += e;
+                    } else if (body[i] == '"') break;
+                    else out += body[i];
+                }
+                return out;
+            };
+
+            std::string url = jfield("url");
+            std::string reqBody = jfield("body");
+            std::vector<std::pair<std::string, std::string>> hd;
+            size_t hk = body.find("\"headers\":{");
+            if (hk != std::string::npos) {
+                size_t i = hk + 11;
+                while (i < body.size()) {
+                    while (i < body.size() && (body[i] == ' ' || body[i] == ',' || body[i] == '\n' || body[i] == '\r')) ++i;
+                    if (i >= body.size() || body[i] == '}') break;
+                    if (body[i] != '"') { ++i; continue; }
+                    size_t ne = body.find('"', i + 1);
+                    if (ne == std::string::npos) break;
+                    std::string name = body.substr(i + 1, ne - i - 1);
+                    size_t colon = body.find(':', ne);
+                    if (colon == std::string::npos) break;
+                    size_t vq = body.find('"', colon);
+                    if (vq == std::string::npos) break;
+                    std::string val;
+                    size_t j = vq + 1;
+                    for (; j < body.size(); ++j) {
+                        if (body[j] == '\\' && j + 1 < body.size()) { val += body[j]; val += body[++j]; }
+                        else if (body[j] == '"') break;
+                        else val += body[j];
+                    }
+                    hd.push_back({ name, val });
+                    i = j + 1;
+                }
+            }
+
+            int st = 0;
+            std::string rb;
+            std::string jr;
+            if (url.empty() || !fetchUrl(url, "POST", hd, reqBody, st, rb))
+                jr = "{\"ok\":false,\"error\":\"fetch failed\"}";
+            else
+                jr = "{\"ok\":" + std::string(st >= 200 && st < 400 ? "true" : "false") +
+                     ",\"status\":" + std::to_string(st) + ",\"text\":\"" + jsonEsc(rb) + "\"}";
+            std::string resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
+                               "Content-Length: " + std::to_string(jr.size()) +
+                               "\r\nCache-Control: no-store\r\nConnection: keep-alive\r\n\r\n" + jr;
+            if (!sslWriteAll(ssl, resp)) break;
+            continue;
         }
 
         std::string statusLine;
@@ -393,6 +591,7 @@ static void serveTls(SSL* ssl, const std::string& host) {
             rbody.find("</head>") != std::string::npos) {
             if (g_cfg.blockLogin) rbody = injectNoLogin(rbody);
             rbody = injectDownload(rbody);
+            rbody = injectTaster(rbody);
             rbody = injectFatality(rbody);
             injected = true;
         }
