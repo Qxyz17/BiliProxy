@@ -1,67 +1,85 @@
+<div align="center">
+
 # BiliProxy
 
-本地 HTTPS 代理 + 本地视频转码。
+[![GitHub Release](https://img.shields.io/github/v/release/Qxyz17/BiliProxy?style=flat&color=%2300a1d6)](https://github.com/Qxyz17/BiliProxy/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/Qxyz17/BiliProxy/build.yml?style=flat&label=build)](https://github.com/Qxyz17/BiliProxy/actions)
+[![License](https://img.shields.io/badge/license-MIT-24292f?style=flat)](LICENSE)
+[![Made by Qxyz17](https://img.shields.io/badge/made%20by-Qxyz17-00a1d6?style=flat)](https://github.com/Qxyz17)
 
-## 网页增强
+</div>
 
-- 本机`127.0.0.1:18080`起 HTTPS 代理，系统 PAC 只把`api.bilibili.com`和`www.bilibili.com`（可选）指过去，其余全部 DIRECT。
-- 拦截`/x/player/playurl`：
-  - 请求侧把`fnval`的 AV1 位（2048）去掉，服务端不下发 AV1-only 的流；
-  - 响应侧只保留目标编码的`dash.video`条目；该清晰度没有就按 1080P→720P→480P→360P 重新取源，全都没有才原样放行。
-- 屏蔽未登录弹窗：只删自动弹出的登录窗，手动点登录不受影响，视频照常续播。
-- 打开`www.bilibili.com`时注入一次 FATALITY 动画（透明背景，约 3.2 秒后自动移除）。
-- 视频页注入下载按钮（右侧悬浮），按 avid/cid 匹配当前视频，支持无水印/有水印两种来源，附进度条。
-- 附加`/__biliproxy/fatality.html`、`/__biliproxy/dl`、`/__biliproxy/dlstatus`供注入的页面使用。
+---
 
-GUI 两个页签：
+## 它解决什么
 
-- **网页增强**：目标编码（自动 / H.264 / H.265 / AV1，单选）、屏蔽未登录弹窗、开机自启。
-- **本地转码**：目标编码（H.264 / H.265 / AV1）、兼容等级（L4.0 / L4.1 / L5.0）、极限兼容（Baseline）。
+| 痛点 | BiliProxy 的做法 |
+| --- | --- |
+| B 站默认下发 AV1 / HEVC 流，老显卡硬解不动 | 代理拦截 `playurl`，强制只留 H.264，清晰度不够就自动降档 |
+| 未登录看视频 480P 流里烧了水印 | 网页一键下载，走无水印原始流 |
+| 本地下载的视频同样是 HEVC / AV1 | 拖进窗口，内置 ffmpeg 转成兼容等级可调的 H.264 |
 
-## 本地转码
+## 功能
 
-- ffmpeg 压缩后直接编进 exe（objcopy 嵌段 + zlib 解压），首次使用时解到`%LOCALAPPDATA%\BiliProxy\ffmpeg.exe`，不再带独立的 ffmpeg.exe。
-- 拖文件到窗口、点“选择文件”、或把视频拖到 exe 图标上（多开时经 WM_COPYDATA 转给已运行实例）。
-- 输出`<原文件名>.h264.mp4`（按目标编码对应.h265.mp4 / .av1.mp4），moov 前置，音频转 AAC。
-- 超过 1080p 自动缩到 1080p。
-- 源文件编码名对但 profile/level 超出所选等级（比如 High@5.1）时不会跳过，照样重编；只有低于等级上限、yuv420p、AAC 时才标记“无需转换”。
-- 命令行批处理：`BiliProxy-console.exe --transcode a.mkv b.mp4`。
+### 网页增强
+
+- 本机 `127.0.0.1:18080` 起 HTTPS 代理，PAC 只接管 `api.bilibili.com` 与 `www.bilibili.com`，其余直连
+- 拦截 `/x/player/playurl`：请求侧剥离 `fnval` AV1 位；响应侧只保留目标编码，缺失时按 1080P→720P→480P→360P 降档取源
+- 屏蔽自动弹出的登录窗，手动登录不受影响
+- 每次打开 `www.bilibili.com` 注入一次 FATALITY 开场动画（约 3.2 秒，透明背景）
+- **网页下载按钮**：视频页右侧竖排悬浮，支持无水印 / 有水印两种来源，实时进度，按 avid/cid 匹配当前视频
+
+### 本地转码
+
+- ffmpeg 经 zlib 压缩后直接编进 exe，首次运行解压到 `%LOCALAPPDATA%\BiliProxy\`，不携带独立 ffmpeg.exe
+- 拖拽 / 选择文件 / 命令行批处理三种入口
+- 目标编码可选 H.264 / H.265 / AV1，兼容等级 L4.0 / L4.1 / L5.0，可强制 Baseline
+- 源为 H.264 但 profile/level 超标（如 High@5.1）时照样重编，不误跳过
+- 输出 moov 前置、AAC 音频、超 1080p 自动缩放
+
+### GUI
+
+两个页签，GDI+ 自绘，无外部控件依赖：
+
+- **网页增强** — 目标编码、屏蔽登录弹窗、开机自启
+- **本地转码** — 编码、兼容等级、任务队列与进度
+
+## 下载
+
+从 [Releases](https://github.com/Qxyz17/BiliProxy/releases) 拿最新版：
+
+- `BiliProxy.exe` — GUI 主程序（推荐）
+- `BiliProxy-console.exe` — 命令行版
 
 ## 安装
 
-1. 双击`安装.cmd`（或直接运行`bin\BiliProxy.exe`）。
-2. 首次运行弹“安全警告”（安装本地根证书）时点“是”。证书只装在当前用户的 Root / TrustedPeople，只用于给 B 站域名签本地证书。
-3. 安装后：自拷到`%LOCALAPPDATA%\BiliProxy\BiliProxy.exe`、写开机自启（`HKCU\...\Run`）、写 PAC（WinINET`AutoConfigURL`）、托盘出现盾牌图标。
-4. 重启一次 Edge 让代理设置生效。
+1. 运行 `BiliProxy.exe`
+2. 首次弹出根证书安装警告时点“是”——证书只装在当前用户 Root / TrustedPeople，只用于 B 站域名的本地 HTTPS 拦截
+3. 程序自动：自拷到 `%LOCALAPPDATA%\BiliProxy\`、注册开机自启、写入 PAC、托盘盾牌图标
+4. 重启一次 Edge 生效
 
-## 卸载
+卸载：程序内点“退出”或运行 `卸载.cmd`，证书、PAC、自启全部清除。
 
-双击`卸载.cmd`（即`--uninstall`）：删根证书、关 PAC、删自启。`%LOCALAPPDATA%\BiliProxy\`下的证书和日志可手动删。
+## 构建
 
-## 重新编译
-
-依赖：`C:\msys64\mingw64`（g++ 17 + OpenSSL 3 静态库 + zlib + brotli），`third_party\ffmpeg.exe`（gyan essentials，打进 exe）。
+依赖 MSYS2 MinGW-w64 工具链（g++ 17 + OpenSSL 3 + zlib + brotli）与 Python 3：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-产物：`bin\BiliProxy.exe`（GUI，单文件，ffmpeg 内嵌）、`bin\BiliProxy-console.exe`（调试/命令行转码）。
+CI 每次推送与打 tag 自动构建 Windows 产物，见 [Actions](https://github.com/Qxyz17/BiliProxy/actions)。
 
-## 验证
+## 已知限制
 
-```powershell
-Get-Content "$env:LOCALAPPDATA\BiliProxy\proxy.log" -Tail 20
-node tools\probe-codec.js    # headless Edge 走代理打开视频页，检查 dash.video 只剩 codecid=7 且在播
-node tools\probe-dl.js       # headless Edge 走代理点下载按钮，检查 avid/cid 匹配与产物
-```
-
-## 限制
-
-- 只处理走系统代理的浏览器请求；B 站客户端、直播不经过它。
-- 网页侧若所有清晰度都没有目标编码，原样放行。
-- AV1 转码用内置的 libaom-av1，速度慢。
+- 只接管走系统代理的浏览器请求，B 站客户端与直播不经过代理
+- 全部清晰度都无目标编码时原样放行
+- AV1 编码用内置 libaom-av1，速度较慢
 
 ---
 
-Made by [Qxyz17](https://github.com/Qxyz17)
+<div align="center">
+
+**BiliProxy** · Made by [Qxyz17](https://github.com/Qxyz17)
+
+</div>
