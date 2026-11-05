@@ -68,22 +68,14 @@ jobs:
         run: |
           $ver = "v" + ($env:REF -replace '^v','')
           $body = @"
-          <div align="center">
+          BiliProxy $ver
 
-          ## BiliProxy $ver
+          - BiliProxy.exe：GUI 主程序，ffmpeg 内嵌
+          - BiliProxy-console.exe：命令行版
 
-          </div>
+          首次运行需安装本地根证书。
 
-          **下载**
-
-          | 文件 | 说明 |
-          | --- | --- |
-          | ``BiliProxy.exe`` | GUI 主程序（推荐） |
-          | ``BiliProxy-console.exe`` | 命令行版 |
-
-          内嵌 ffmpeg，单文件即用。首次运行需安装本地根证书。
-
-          <sub>Made by Qxyz17</sub>
+          Made by Qxyz17
           "@
           gh release create $env:REF --repo $env:GITHUB_REPOSITORY `
             --title "BiliProxy $ver" --notes $body `
