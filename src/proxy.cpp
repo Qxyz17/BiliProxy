@@ -267,7 +267,7 @@ static void serveTls(SSL* ssl, const std::string& host) {
                           ",\"out\":\"" + jsonEsc(U8(j.out)) + "\",\"note\":\"" + jsonEsc(U8(j.note)) + "\"}";
             } else {
                 std::wstring err;
-                int id = DlStart(atoi(param("wm").c_str()) ? 1 : 0, param("name"), err);
+                int id = DlStart(atoi(param("wm").c_str()) ? 1 : 0, param("name"), param("aid"), param("cid"), err);
                 jr = id < 0 ? "{\"ok\":false,\"msg\":\"" + jsonEsc(U8(err)) + "\"}"
                             : "{\"ok\":true,\"id\":" + std::to_string(id) + "}";
             }
@@ -349,8 +349,10 @@ static void serveTls(SSL* ssl, const std::string& host) {
         }
         bool rewritten = false;
         if ((enc.empty() || decoded) && target.find("/playurl") != std::string::npos &&
-            rbody.find("\"video\"") != std::string::npos)
-            DlCachePlayurl(rbody);
+            rbody.find("\"video\"") != std::string::npos) {
+            std::string q = target.find('?') == std::string::npos ? "" : target.substr(target.find('?') + 1);
+            DlCachePlayurl(rbody, q);
+        }
         if (g_cfg.codec != 0 && (enc.empty() || decoded) && target.find("/playurl") != std::string::npos &&
             rbody.find("\"video\"") != std::string::npos) {
             std::string f = filterPlayurlJson(rbody, g_cfg.codec);

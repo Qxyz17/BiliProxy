@@ -14,7 +14,8 @@ struct DlJob {
 };
 
 void DlInit();
-void DlCachePlayurl(const std::string& body);
-int  DlStart(int wm, const std::string& titleU8, std::wstring& err);
+void DlCachePlayurl(const std::string& body, const std::string& query);
+int  DlStart(int wm, const std::string& titleU8, const std::string& aid,
+             const std::string& cid, std::wstring& err);
 bool DlGet(int id, DlJob* out);
 std::wstring DlOutDir();

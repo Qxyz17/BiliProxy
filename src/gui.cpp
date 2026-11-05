@@ -56,10 +56,10 @@ static void InitLayout() {
     y += ch + 12;
     SetRect(&g_rcHevc, pad, y, pad + cw, y + ch);
     SetRect(&g_rcAv1, pad + cw + gap, y, pad + cw + gap + cw, y + ch);
-    SetRect(&g_rcNoLogin, pad, 288, kW - pad, 288 + 34);
-    SetRect(&g_rcAutostart, pad, 330, kW - pad, 330 + 34);
-    SetRect(&g_rcLog, pad, 398, pad + 96, 398 + 32);
-    SetRect(&g_rcQuit, kW - pad - 96, 398, kW - pad, 398 + 32);
+    SetRect(&g_rcNoLogin, pad, 296, kW - pad, 296 + 36);
+    SetRect(&g_rcAutostart, pad, 344, kW - pad, 344 + 36);
+    SetRect(&g_rcLog, pad, 448, pad + 96, 448 + 34);
+    SetRect(&g_rcQuit, kW - pad - 96, 448, kW - pad, 448 + 34);
     SetRect(&g_rcClose, kW - 40, 8, kW - 12, 36);
 
     SetRect(&g_rcTabWeb, pad, 52, pad + 96, 84);
@@ -189,12 +189,12 @@ static void DrawTabs(Graphics& g) {
 
 static void DrawStatus(Graphics& g) {
     SolidBrush dot(kSuccess);
-    g.FillEllipse(&dot, 20.0f, 372.0f, 8.0f, 8.0f);
+    g.FillEllipse(&dot, 20.0f, 412.0f, 8.0f, 8.0f);
 
     wchar_t buf[128];
     long rw = InterlockedCompareExchange(&g_rewrites, 0, 0);
     swprintf(buf, 128, L"127.0.0.1:%d · 已改写 %ld 次", kPort, rw);
-    RECT sr{ 34, 366, kW - 20, 386 };
+    RECT sr{ 34, 406, kW - 20, 426 };
     DrawStr(g, buf, sr, 12.0f, kSecondary);
 }
 

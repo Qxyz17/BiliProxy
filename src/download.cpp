@@ -3,22 +3,27 @@
 #include "transcode.h"
 
 #include <filesystem>
-#include <deque>
+#include <map>
 
 namespace fs = std::filesystem;
 
 // 缓存的 playurl 里取出的流地址
 struct Streams {
     std::string vurl, aurl;
+    std::string aid, cid;   // 所属视频，下载时按 cid 匹配
     int w = 0, h = 0;
     double dur = 0;
+    long long vbytes = 0;   // 视频流预期字节数，用来算进度
+    long long abytes = 0;
     std::wstring title;
     bool ok = false;
 };
 
 static CRITICAL_SECTION g_cs;
 static bool g_csInit = false;
-static Streams g_last;
+static std::map<std::string, Streams> g_cache;   // cid -> 流
+static Streams g_last;                            // 最近一条，cid 匹配不上时兜底
+static std::vector<Streams> g_srcs;              // 每个任务自己的流，入队时定死
 static std::vector<DlJob> g_jobs;
 static HANDLE g_evt = nullptr;
 static std::wstring g_outDir, g_ffmpeg, g_errFile;
@@ -27,7 +32,7 @@ static void Lock() { EnterCriticalSection(&g_cs); }
 static void Unlock() { LeaveCriticalSection(&g_cs); }
 
 static void SetJob(int idx, int state, int percent, const std::wstring& note = L"");
-static int  RunFfmpegProgress(const std::wstring& args, int idx, double durSec);
+static int  RunFfmpeg(const std::wstring& args, int idx, long long expectBytes);
 
 static std::string JsonStr(const std::string& obj, const char* key) {
     std::string k = std::string("\"") + key + "\"";
@@ -77,8 +82,20 @@ static int JsonInt(const std::string& obj, const char* key, int def = 0) {
     return atoi(obj.c_str() + p + 1);
 }
 
+// 数字字段：值没有引号，JsonStr 取不到，直接从冒号后取数
+static double JsonNum(const std::string& obj, const char* key, double def = 0.0) {
+    std::string k = std::string("\"") + key + "\"";
+    size_t p = obj.find(k);
+    if (p == std::string::npos) return def;
+    p = obj.find(':', p + k.size());
+    if (p == std::string::npos) return def;
+    ++p;
+    while (p < obj.size() && (obj[p] == ' ' || obj[p] == '\t')) ++p;
+    return atof(obj.c_str() + p);
+}
+
 // 在数组里挑带宽最大的对象
-static std::string BestInArray(const std::string& body, const char* key, int* outW, int* outH) {
+static std::string BestInArray(const std::string& body, const char* key, int* outW, int* outH, int* outBw = nullptr) {
     std::string k = std::string("\"") + key + "\"";
     size_t p = body.find(k);
     if (p == std::string::npos) return {};
@@ -122,24 +139,40 @@ static std::string BestInArray(const std::string& body, const char* key, int* ou
     }
     if (outW) *outW = w;
     if (outH) *outH = h;
+    if (outBw) *outBw = bestBw > 0 ? bestBw : 0;
     return best;
 }
 
-void DlCachePlayurl(const std::string& body) {
+void DlCachePlayurl(const std::string& body, const std::string& query) {
     if (!g_csInit) return;
-    int w = 0, h = 0;
-    std::string v = BestInArray(body, "video", &w, &h);
-    std::string a = BestInArray(body, "audio", nullptr, nullptr);
+    int w = 0, h = 0, vbw = 0, abw = 0;
+    std::string v = BestInArray(body, "video", &w, &h, &vbw);
+    std::string a = BestInArray(body, "audio", nullptr, nullptr, &abw);
     if (v.empty()) return;
     Streams s;
     s.vurl = v;
     s.aurl = a;
     s.w = w;
     s.h = h;
-    s.dur = atof(JsonStr(body, "duration").c_str());
+    s.dur = JsonNum(body, "duration");
+    if (s.dur > 0.05) {
+        s.vbytes = (long long)(vbw / 8.0 * s.dur);
+        s.abytes = (long long)(abw / 8.0 * s.dur);
+    }
     s.ok = true;
+    auto qval = [&](const char* k) -> std::string {
+        std::string key = std::string(k) + "=";
+        size_t p = query.find(key);
+        if (p == std::string::npos) return {};
+        size_t e = query.find('&', p);
+        return query.substr(p + key.size(), e == std::string::npos ? std::string::npos : e - p - key.size());
+    };
+    s.aid = qval("avid");
+    s.cid = qval("cid");
     Lock();
+    if (!s.cid.empty()) g_cache[s.cid] = s;
     g_last = s;
+    if (g_cache.size() > 16) g_cache.erase(g_cache.begin());
     Unlock();
 }
 
@@ -168,7 +201,7 @@ static void SetJob(int idx, int state, int percent, const std::wstring& note) {
 static void ProcessJob(int idx) {
     Streams s;
     Lock();
-    s = g_last;
+    if (idx >= 0 && idx < (int)g_srcs.size()) s = g_srcs[idx];
     Unlock();
     if (!s.ok) { SetJob(idx, 3, 0, L"没有可用的播放地址"); return; }
 
@@ -203,7 +236,9 @@ static void ProcessJob(int idx) {
     Log("download start (wm=%d %dx%d) %s", g_jobs[idx].wm, s.w, s.h, s.vurl.c_str());
     SetJob(idx, 1, 0, L"下载中");
 
-    int code = RunFfmpegProgress(args, idx, s.dur);
+    //预期总字节：直拷近似等于两路流带宽折算量
+    long long expect = s.vbytes + (s.aurl.empty() ? 0 : s.abytes);
+    int code = RunFfmpeg(args, idx, expect);
     if (code == 0 && fs::exists(out))
         SetJob(idx, 2, 100, L"完成");
     else {
@@ -213,7 +248,7 @@ static void ProcessJob(int idx) {
     }
 }
 
-static int RunFfmpegProgress(const std::wstring& args, int idx, double durSec) {
+static int RunFfmpeg(const std::wstring& args, int idx, long long expectBytes) {
     SECURITY_ATTRIBUTES sa{ sizeof sa, nullptr, TRUE };
     HANDLE rd = nullptr, wr = nullptr;
     if (!CreatePipe(&rd, &wr, &sa, 0)) return -1;
@@ -243,6 +278,7 @@ static int RunFfmpegProgress(const std::wstring& args, int idx, double durSec) {
     std::string buf, line;
     char chunk[4096];
     DWORD got = 0;
+    long long totalSize = 0;
     for (;;) {
         if (!ReadFile(rd, chunk, sizeof chunk, &got, nullptr) || got == 0) break;
         buf.append(chunk, got);
@@ -250,12 +286,15 @@ static int RunFfmpegProgress(const std::wstring& args, int idx, double durSec) {
         while ((p = buf.find('\n')) != std::string::npos) {
             line.assign(buf, 0, p);
             buf.erase(0, p + 1);
-            if (line.compare(0, 12, "out_time_us=") == 0 && durSec > 0.05) {
-                long long us = _strtoi64(line.c_str() + 12, nullptr, 10);
-                int pct = (int)(us / (durSec * 1e4));
-                if (pct < 0) pct = 0;
-                if (pct > 99) pct = 99;
-                SetJob(idx, 1, pct);
+            if (line.compare(0, 11, "total_size=") == 0) {
+                totalSize = _strtoi64(line.c_str() + 11, nullptr, 10);
+            } else if (line.compare(0, 12, "out_time_us=") == 0) {
+                if (expectBytes > 0 && totalSize > 0) {
+                    int pct = (int)((double)totalSize * 100.0 / (double)expectBytes);
+                    if (pct > 99) pct = 99;
+                    if (pct < 0) pct = 0;
+                    if (pct > 0) SetJob(idx, 1, pct);
+                }
             }
         }
     }
@@ -298,14 +337,20 @@ void DlInit() {
     CreateThread(nullptr, 0, WorkerProc, nullptr, 0, nullptr);
 }
 
-int DlStart(int wm, const std::string& titleU8, std::wstring& err) {
+int DlStart(int wm, const std::string& titleU8, const std::string& aid,
+            const std::string& cid, std::wstring& err) {
     if (!g_csInit) { err = L"未初始化"; return -1; }
     Lock();
-    if (!g_last.ok) { Unlock(); err = L"先播放一下视频"; return -1; }
-    if (!titleU8.empty()) g_last.title = W(titleU8);
+    Streams s;
+    auto it = cid.empty() ? g_cache.end() : g_cache.find(cid);
+    if (it != g_cache.end()) s = it->second;
+    else if (g_last.ok && (cid.empty() || g_last.cid == cid)) s = g_last;
+    if (!s.ok) { Unlock(); err = L"先播放一下视频"; return -1; }
+    if (!titleU8.empty()) s.title = W(titleU8);
     DlJob j;
     j.wm = wm;
     g_jobs.push_back(j);
+    g_srcs.push_back(s);
     int id = (int)g_jobs.size() - 1;
     Unlock();
     SetEvent(g_evt);
