@@ -286,7 +286,14 @@ static bool fetchUrl(const std::string& url, const std::string& method,
 
     std::string req = method + " " + target + " HTTP/1.1\r\n"
                       "Host: " + hostPort + "\r\n";
-    for (auto& h : headers) req += h.first + ": " + h.second + "\r\n";
+    bool hasLen = false;
+    for (auto& h : headers) {
+        req += h.first + ": " + h.second + "\r\n";
+        if (lower(h.first) == "content-length") hasLen = true;
+    }
+    // 不带长度时有的网关把 body 当成空的，回 400 invalid arguments
+    if (!reqBody.empty() && !hasLen)
+        req += "Content-Length: " + std::to_string(reqBody.size()) + "\r\n";
     req += "Accept-Encoding: identity\r\nConnection: close\r\n\r\n";
     req += reqBody;
 
