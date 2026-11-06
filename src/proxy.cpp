@@ -373,6 +373,29 @@ static void serveTls(SSL* ssl, const std::string& host) {
             continue;
         }
 
+        if (target.rfind("/__biliproxy/frames", 0) == 0) {
+            std::string q = target.find('?') == std::string::npos ? "" : target.substr(target.find('?') + 1);
+            std::vector<std::string> fr;
+            std::wstring err;
+            bool ok = DlFrames(queryParam(q, "cid"), atoi(queryParam(q, "n").c_str()),
+                               atoi(queryParam(q, "w").c_str()), fr, err);
+            std::string jr;
+            if (!ok) jr = "{\"ok\":false,\"msg\":\"" + jsonEsc(U8(err)) + "\"}";
+            else {
+                jr = "{\"ok\":true,\"frames\":[";
+                for (size_t i = 0; i < fr.size(); ++i) {
+                    if (i) jr += ",";
+                    jr += "\"data:image/jpeg;base64," + fr[i] + "\"";
+                }
+                jr += "]}";
+            }
+            std::string resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
+                               "Content-Length: " + std::to_string(jr.size()) +
+                               "\r\nCache-Control: no-store\r\nConnection: keep-alive\r\n\r\n" + jr;
+            if (!sslWriteAll(ssl, resp)) break;
+            continue;
+        }
+
         if (target.rfind("/__biliproxy/dl", 0) == 0) {
             std::string q = target.find('?') == std::string::npos ? "" : target.substr(target.find('?') + 1);
             auto param = [&](const char* k) { return queryParam(q, k); };
@@ -590,8 +613,7 @@ static void serveTls(SSL* ssl, const std::string& host) {
             lower(getHeader(rh, "content-type")).find("text/html") != std::string::npos &&
             rbody.find("</head>") != std::string::npos) {
             if (g_cfg.blockLogin) rbody = injectNoLogin(rbody);
-            rbody = injectDownload(rbody);
-            rbody = injectTaster(rbody);
+            rbody = injectWebUi(rbody);
             rbody = injectFatality(rbody);
             injected = true;
         }

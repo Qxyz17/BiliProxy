@@ -307,8 +307,137 @@ static int RunFfmpeg(const std::wstring& args, int idx, long long expectBytes) {
     return (int)ec;
 }
 
-static DWORD WINAPI WorkerProc(LPVOID) {
-    for (;;) {
+static std::wstring g_cacheDir;
+
+static std::string B64(const std::string& in) {
+    static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string o;
+    o.reserve((in.size() + 2) / 3 * 4);
+    size_t i = 0;
+    for (; i + 2 < in.size(); i += 3) {
+        unsigned v = ((unsigned)(unsigned char)in[i] << 16) |
+                     ((unsigned)(unsigned char)in[i + 1] << 8) | (unsigned char)in[i + 2];
+        o += T[(v >> 18) & 63]; o += T[(v >> 12) & 63];
+        o += T[(v >> 6) & 63];  o += T[v & 63];
+    }
+    if (in.size() - i == 1) {
+        unsigned v = (unsigned)(unsigned char)in[i] << 16;
+        o += T[(v >> 18) & 63]; o += T[(v >> 12) & 63]; o += "==";
+    } else if (in.size() - i == 2) {
+        unsigned v = ((unsigned)(unsigned char)in[i] << 16) | ((unsigned)(unsigned char)in[i + 1] << 8);
+        o += T[(v >> 18) & 63]; o += T[(v >> 12) & 63]; o += T[(v >> 6) & 63]; o += '=';
+    }
+    return o;
+}
+
+// 跑 ffmpeg 并抓 stdout 的二进制
+static bool RunCapture(const std::wstring& args, std::string& out) {
+    SECURITY_ATTRIBUTES sa{ sizeof sa, nullptr, TRUE };
+    HANDLE rd = nullptr, wr = nullptr;
+    if (!CreatePipe(&rd, &wr, &sa, 0)) return false;
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    HANDLE nulH = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = wr;
+    si.hStdError = (nulH != INVALID_HANDLE_VALUE) ? nulH : wr;
+    si.hStdInput = (nulH != INVALID_HANDLE_VALUE) ? nulH : INVALID_HANDLE_VALUE;
+
+    std::wstring cmdline = L"\"" + g_ffmpeg + L"\" " + args;
+    PROCESS_INFORMATION pi{};
+    BOOL ok = CreateProcessW(g_ffmpeg.c_str(), &cmdline[0], nullptr, nullptr, TRUE,
+                             CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    CloseHandle(wr);
+    if (nulH != INVALID_HANDLE_VALUE) CloseHandle(nulH);
+    if (!ok) { CloseHandle(rd); return false; }
+
+    char buf[65536];
+    DWORD got = 0;
+    while (ReadFile(rd, buf, sizeof buf, &got, nullptr) && got) out.append(buf, got);
+    CloseHandle(rd);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD ec = 1;
+    GetExitCodeProcess(pi.hProcess, &ec);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return ec == 0;
+}
+
+static bool PickStream(const std::string& cid, Streams& s) {
+    Lock();
+    auto it = cid.empty() ? g_cache.end() : g_cache.find(cid);
+    if (it != g_cache.end()) s = it->second;
+    else if (g_last.ok && (cid.empty() || g_last.cid == cid)) s = g_last;
+    Unlock();
+    return s.ok;
+}
+
+// 整段流落到本地一份，后面抽帧都读本地文件，不再碰页面播放器
+static std::wstring EnsureLocal(const std::string& cid, const Streams& s, std::wstring& err) {
+    std::wstring path = g_cacheDir + L"\\" + W(cid.empty() ? s.cid : cid) + L".mp4";
+    std::error_code ec;
+    if (fs::exists(path, ec) && fs::file_size(path, ec) > 10000) return path;
+
+    std::wstring ref = L"Referer: https://www.bilibili.com/\r\nUser-Agent: Mozilla/5.0\r\n";
+    std::wstring args = L"-y -hide_banner -nostdin -headers \"" + ref + L"\" -i \"" + W(s.vurl) + L"\" ";
+    if (!s.aurl.empty())
+        args += L"-headers \"" + ref + L"\" -i \"" + W(s.aurl) + L"\" ";
+    args += L"-map 0:v:0" + std::wstring(s.aurl.empty() ? L"" : L" -map 1:a:0") +
+            L" -c copy -movflags +faststart \"" + path + L"\"";
+    Log("ai local cache: %s", s.vurl.c_str());
+    std::string sink;
+    if (!RunCapture(args, sink)) { err = L"视频流下载失败"; return L""; }
+    if (!fs::exists(path, ec) || fs::file_size(path, ec) < 10000) { err = L"视频流下载失败"; return L""; }
+    return path;
+}
+
+// 按总量均匀抽 count 帧，每帧一条 base64 JPEG
+bool DlFrames(const std::string& cid, int count, int width,
+              std::vector<std::string>& frames, std::wstring& err) {
+    if (!g_csInit) { err = L"未初始化"; return false; }
+    Streams s;
+    if (!PickStream(cid, s)) { err = L"先播放一下视频"; return false; }
+    if (s.dur <= 0.1) { err = L"拿不到时长"; return false; }
+    if (count < 1) count = 1;
+    if (count > 120) count = 120;
+    if (width < 160) width = 160;
+    if (width > 768) width = 768;
+
+    std::wstring local = EnsureLocal(cid, s, err);
+    if (local.empty()) return false;
+
+    double fps = count / s.dur;
+    wchar_t vf[160];
+    swprintf(vf, 160, L"fps=%.4f,scale=%d:-2", fps, width);
+    std::wstring args = L"-hide_banner -nostdin -i \"" + local + L"\" -vf \"" + vf +
+                        L"\" -frames:v " + std::to_wstring(count) +
+                        L" -q:v 4 -f image2pipe -vcodec mjpeg -";
+    std::string raw;
+    if (!RunCapture(args, raw) || raw.size() < 1000) { err = L"抽帧失败"; return false; }
+
+    // 按 SOI/EOI 切 JPEG
+    frames.clear();
+    size_t i = 0;
+    while (i + 1 < raw.size() && (int)frames.size() < count) {
+        if ((unsigned char)raw[i] != 0xFF || (unsigned char)raw[i + 1] != 0xD8) { ++i; continue; }
+        size_t j = i + 2;
+        size_t end = std::string::npos;
+        while (j + 1 < raw.size()) {
+            if ((unsigned char)raw[j] == 0xFF && (unsigned char)raw[j + 1] == 0xD9) { end = j + 2; break; }
+            ++j;
+        }
+        if (end == std::string::npos) break;
+        frames.push_back(B64(raw.substr(i, end - i)));
+        i = end;
+    }
+    if (frames.empty()) { err = L"抽帧失败"; return false; }
+    return true;
+}
+
+static DWORD WINAPI WorkerProc(LPVOID) {    for (;;) {
         WaitForSingleObject(g_evt, INFINITE);
         for (;;) {
             int idx = -1;
@@ -332,6 +461,8 @@ void DlInit() {
     g_outDir = std::wstring(up) + L"\\Downloads\\BiliProxy";
     CreateDirectoryW(g_outDir.c_str(), nullptr);
     g_errFile = g_dir + L"\\dl-err.txt";
+    g_cacheDir = g_dir + L"\\cache";
+    CreateDirectoryW(g_cacheDir.c_str(), nullptr);
     g_ffmpeg = TranscodeFfmpegPath();
     g_evt = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     CreateThread(nullptr, 0, WorkerProc, nullptr, 0, nullptr);

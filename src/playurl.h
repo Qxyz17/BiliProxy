@@ -8,5 +8,5 @@ std::string setQn(const std::string& target, int qn);
 std::string stripAv1Bit(const std::string& target);
 std::string injectNoLogin(const std::string& html);
 std::string injectFatality(const std::string& html);
-std::string injectDownload(const std::string& html);
-std::string injectTaster(const std::string& html);
+std::string injectWebUi(const std::string& html);
+

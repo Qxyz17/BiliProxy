@@ -1,6 +1,6 @@
 #include "common.h"
 #include "playurl.h"
-#include "taster_html.h"
+#include "webui_html.h"
 
 static int findCodecid(const std::string& obj) {
     size_t p = obj.find("\"codecid\"");
@@ -96,20 +96,34 @@ std::string filterPlayurlJson(const std::string& body, int want) {
 // ------------------------------------------------------------------ 网络
 
 
+// 只隐藏弹窗，不从 DOM 里摘除：B 站的播放器挂在同一棵树上，删节点会把播放状态一起带走
 static const char* kNoLoginSnippet =
     "<script>(function(){if(window.__biliproxyNoLogin)return;window.__biliproxyNoLogin=1;"
-    "var last=0;function isLogin(e){var n=e.target;while(n&&n.nodeType===1){if(/login|unlogin/i.test(String(n.className||'')))return true;n=n.parentNode;}return false;}['pointerdown','mousedown','keydown','touchstart'].forEach(function(t){"
+    "var last=0,styled=false;"
+    "function style(){if(styled)return;styled=true;var s=document.createElement('style');"
+    "s.textContent='.__bpNoLogin{display:none!important;visibility:hidden!important;"
+    "pointer-events:none!important}';"
+    "(document.head||document.documentElement).appendChild(s);}"
+    "function isLogin(e){var n=e.target;while(n&&n.nodeType===1){"
+    "if(/login|unlogin/i.test(String(n.className||'')))return true;n=n.parentNode;}return false;}"
+    "['pointerdown','mousedown','keydown','touchstart'].forEach(function(t){"
     "document.addEventListener(t,function(e){last=Date.now()+(isLogin(e)?15000:0);},true);});"
     "function auto(){return Date.now()>last+1200;}"
     "function resume(){var v=document.querySelector('video');"
-    "if(v&&v.paused&&!v.ended&&v.currentTime>0){var q=v.play();if(q&&q.catch)q.catch(function(){});}}"
-    "function sweep(){if(!auto())return;"
+    "if(!v||!v.paused||v.ended)return;"
+    "if(!(v.currentTime>0))return;"
+    "var q=v.play();if(q&&q.catch)q.catch(function(){});}"
+    "function sweep(){if(!auto())return;style();"
     "var n=document.querySelectorAll('[class*=\"bili-mini\"],[class*=\"login-pwd-wp\"]');"
-    "if(!n.length)return;for(var i=0;i<n.length;i++)n[i].remove();"
-    "if(document.body)document.body.style.overflow='';resume();}"
-    "new MutationObserver(function(){setTimeout(sweep,600);})"
+    "for(var i=0;i<n.length;i++){var el=n[i];"
+    "if(el.className.indexOf('__bpNoLogin')<0)el.className+=' __bpNoLogin';}"
+    "if(n.length&&document.body)document.body.style.overflow='';}"
+    "function tick(){sweep();"
+    "var v=document.querySelector('video');"
+    "if(v&&v.paused&&!v.ended&&v.currentTime>0)resume();}"
+    "if(document.documentElement)new MutationObserver(function(){setTimeout(tick,400);})"
     ".observe(document.documentElement,{childList:true,subtree:true});"
-    "setInterval(sweep,1500);})();</script>";
+    "setInterval(tick,1200);})();</script>";
 std::string injectNoLogin(const std::string& html) {
     size_t p = html.find("</head>");
     if (p == std::string::npos) p = html.find("</HEAD>");
@@ -151,124 +165,13 @@ std::string stripAv1Bit(const std::string& target) {
     return out;
 }
 
-static const char* kDownloadSnippet =
-    "<script>(function(){if(window.__biliProxyDl)return;window.__biliProxyDl=1;"
-    "if(!/\\/video\\//.test(location.pathname))return;"
-    "var st=document.createElement('style');"
-    "st.textContent='"
-    "@keyframes bpIn{from{transform:translateY(-50%) translateX(100%);opacity:0}"
-    "to{transform:translateY(-50%) translateX(0);opacity:1}}"
-    "@media (prefers-reduced-motion:reduce){@keyframes bpIn{from{opacity:0}to{opacity:1}}}"
-    "#bpDl{position:fixed;right:0;top:50%;transform:translateY(-50%);"
-    "z-index:2147483600;background:#00a1d6;color:#fff;padding:16px 12px;"
-    "border-radius:8px 0 0 8px;cursor:pointer;font:14px/1.6 sans-serif;"
-    "letter-spacing:4px;writing-mode:vertical-rl;user-select:none;"
-    "overflow:hidden;animation:bpIn .5s ease-out .6s backwards;"
-    "transition:background .18s ease,transform .18s ease,box-shadow .18s ease}"
-    "#bpDl:hover{background:#0090c8;transform:translateY(-50%) translateX(-4px);"
-    "box-shadow:-4px 2px 12px rgba(0,0,0,.22)}"
-    "#bpDl:active{background:#0082b3;transform:translateY(-50%) translateX(-1px);"
-    "transition-duration:.06s}"
-    "#bpDl .bpF{position:absolute;left:0;right:0;bottom:0;height:0;"
-    "background:rgba(255,255,255,.22);transition:height .35s ease;pointer-events:none}"
-    "#bpDl span{position:relative}';"
-    "document.head.appendChild(st);"
-    "var btn=document.createElement('div');btn.id='bpDl';"
-    "btn.innerHTML='<div class=\"bpF\"></div><span>下载</span>';"
-    "document.documentElement.appendChild(btn);"
-    "var fill=btn.querySelector('.bpF');"
-    "var panel=null,tm=null,st2=null,bar=null;"
-    "function closePanel(){if(panel){panel.remove();panel=null;}}"
-    "function makePanel(){"
-    "var e=document.createElement('div');"
-    "e.style.cssText='position:fixed;z-index:2147483600;background:#fff;"
-    "border:1px solid #e3e3e3;border-radius:8px;padding:10px;"
-    "box-shadow:0 2px 10px rgba(0,0,0,.12);font:13px/1.6 sans-serif;"
-    "color:#222;width:180px;box-sizing:border-box;"
-    "opacity:0;transform:translateX(6px);transition:opacity .16s ease,transform .16s ease';"
-    "e.innerHTML='<div style=\"font-weight:600;margin-bottom:6px\">下载视频</div>"
-    "<div class=\"d0\" style=\"padding:6px 8px;cursor:pointer;border-radius:4px;"
-    "transition:background .12s\">无水印</div>"
-    "<div class=\"d1\" style=\"padding:6px 8px;cursor:pointer;border-radius:4px;"
-    "transition:background .12s\">有水印</div>"
-    "<div class=\"bw\" style=\"display:none;margin-top:8px;height:4px;background:#eee;"
-    "border-radius:2px;overflow:hidden\"><div class=\"bar\" style=\"height:100%;width:0;"
-    "background:#00a1d6;transition:width .3s ease\"></div></div>"
-    "<div class=\"st\" style=\"margin-top:6px;color:#666;font-size:12px;"
-    "word-break:break-all\"></div>';"
-    "document.body.appendChild(e);"
-    "var opts=e.querySelectorAll('.d0,.d1');"
-    "for(var i=0;i<opts.length;i++){"
-    "opts[i].addEventListener('mouseover',function(){this.style.background='#f4f4f4';});"
-    "opts[i].addEventListener('mouseout',function(){this.style.background='';});}"
-    "var r=btn.getBoundingClientRect();"
-    "var pw=180,ph=e.offsetHeight||130,vh=window.innerHeight;"
-    "var left=r.left-pw-8;"
-    "if(left<8)left=8;"
-    "var top=r.top;"
-    "if(top+ph>vh-8)top=vh-ph-8;"
-    "if(top<8)top=8;"
-    "e.style.left=left+'px';e.style.top=top+'px';"
-    "requestAnimationFrame(function(){e.style.opacity='1';e.style.transform='translateX(0)';});"
-    "st2=e.querySelector('.st');bar=e.querySelector('.bar');"
-    "e.querySelector('.d0').onclick=function(){start(0);};"
-    "e.querySelector('.d1').onclick=function(){start(1);};"
-    "return e;}"
-    "function start(wm){"
-    "if(tm){clearInterval(tm);tm=null;}"
-    "st2.textContent='准备中…';bar.parentNode.style.display='none';"
-    "var vd=window.__INITIAL_STATE__&&window.__INITIAL_STATE__.videoData;"
-    "var aid=vd&&vd.aid||'';var cid=vd&&vd.cid||'';"
-    "var nm=encodeURIComponent((document.title||'').replace(/^【.*?】/,'')"
-    ".replace(/_哔哩哔哩_bilibili$/,'')"
-    ".replace(/[\\\\\\/:*?\"<>|]/g,'_').slice(0,80)||'video');"
-    "var done=false;"
-    "function fail(t){if(done)return;done=true;"
-    "st2.textContent='失败：'+t;bar.parentNode.style.display='none';fill.style.height='0';}"
-    "var ctl=window.AbortController?new AbortController():null;"
-    "var to=setTimeout(function(){if(ctl)ctl.abort();fail('超时');},15000);"
-    "fetch('/__biliproxy/dl?wm='+wm+'&name='+nm+'&aid='+aid+'&cid='+cid,{cache:'no-store',signal:ctl?ctl.signal:undefined})"
-    ".then(function(r){return r.json();})"
-    ".then(function(j){"
-    "clearTimeout(to);if(done)return;"
-    "if(!j.ok){fail(j.msg||'未知');return;}"
-    "bar.parentNode.style.display='block';bar.style.width='0%';"
-    "st2.textContent='下载中 0%';"
-    "tm=setInterval(function(){"
-    "fetch('/__biliproxy/dlstatus?id='+j.id,{cache:'no-store'})"
-    ".then(function(r){return r.json();})"
-    ".then(function(s){"
-    "if(s.state==2){clearInterval(tm);tm=null;bar.style.width='100%';"
-    "fill.style.height='100%';setTimeout(function(){fill.style.height='0';},1800);"
-    "st2.textContent='完成：'+(s.out||'').split(/[\\\\/]/).pop();}"
-    "else if(s.state==3){clearInterval(tm);tm=null;fail(s.note||'失败');}"
-    "else{bar.style.width=(s.pct||0)+'%';fill.style.height=(s.pct||0)+'%';"
-    "st2.textContent='下载中 '+(s.pct||0)+'%';}})"
-    ".catch(function(){});},500);})"
-    ".catch(function(){clearTimeout(to);fail('请求失败');});}"
-    "btn.onclick=function(e){e.stopPropagation();"
-    "if(panel){closePanel();return;}"
-    "panel=makePanel();};"
-    "document.addEventListener('click',function(e){"
-    "if(panel&&!panel.contains(e.target)&&e.target!==btn)closePanel();},true);"
-    "window.addEventListener('resize',function(){if(panel)closePanel();});"
-    "})();</script>";
-
-std::string injectDownload(const std::string& html) {
-    size_t p = html.find("</body>");
-    if (p == std::string::npos) return html;
-    std::string out = html;
-    out.insert(p, kDownloadSnippet);
-    return out;
-}
-
-// 页面里没有 chrome.* 扩展 API，用 localStorage + 代理端点和原始 content.js 的调用对齐
-static const char* kTasterShim =
-    "<script>(function(){if(window.__btShim)return;window.__btShim=1;"
+// 页面里没有扩展 API，用 localStorage + 代理端点顶上
+static const char* kWebUiShim =
+    "<script>(function(){if(window.__bpShim)return;window.__bpShim=1;"
     "var C=window.chrome||(window.chrome={});"
     "var S=C.storage||(C.storage={});"
     "var L=S.local||(S.local={});"
-    "function K(k){return 'bt:'+k;}"
+    "function K(k){return 'bp:'+k;}"
     "L.get=function(keys,cb){var out={};"
     "var list=Array.isArray(keys)?keys:(typeof keys==='string'?[keys]:(keys?Object.keys(keys):[]));"
     "try{for(var i=0;i<list.length;i++){var v=localStorage.getItem(K(list[i]));"
@@ -281,31 +184,20 @@ static const char* kTasterShim =
     "R.lastError=undefined;"
     "R.sendMessage=function(msg,cb){cb=cb||function(){};"
     "var done=function(r){setTimeout(function(){cb(r);},0);};"
-    "if(!msg)return done({ok:false,error:'empty'});"
-    "if(msg.type==='BILI_FETCH'){"
-    "fetch('/__biliproxy/fetch?url='+encodeURIComponent(msg.url),{credentials:'include'})"
-    ".then(function(r){return r.json();}).then(done)"
-    ".catch(function(e){done({ok:false,error:String(e&&e.message||e)});});return;}"
-    "if(msg.type==='AI_FETCH'){"
-    "fetch('/__biliproxy/ai',{method:'POST',headers:{'Content-Type':'application/json'},"
-    "body:JSON.stringify({url:msg.url,headers:msg.headers||{},body:msg.body||''})})"
-    ".then(function(r){return r.json();}).then(done)"
-    ".catch(function(e){done({ok:false,error:String(e&&e.message||e)});});return;}"
     "done({ok:false,error:'unsupported'});};"
     "})();</script>";
 
-std::string injectTaster(const std::string& html) {
+std::string injectWebUi(const std::string& html) {
     size_t p = html.find("</body>");
     if (p == std::string::npos) p = html.find("</html>");
     if (p == std::string::npos) return html;
-    std::string blk = std::string("<style>") + kTasterCss + "</style>" +
-                      kTasterShim +
-                      std::string("<script>") + kTasterJs + "</script>";
+    std::string blk = std::string("<style>") + kWebUiCss + "</style>" +
+                      kWebUiShim +
+                      std::string("<script>") + kWebUiJs + "</script>";
     std::string out = html;
     out.insert(p, blk);
     return out;
 }
-
 static const char* kFatalitySnippet =
     "<script>(function(){if(window.__biliProxyFatality)return;window.__biliProxyFatality=1;"
     "var d=document.createElement('div');"
