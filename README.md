@@ -68,6 +68,12 @@
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
+页面侧边栏的前端代码在 `src/webui/`，改动后先重新生成内嵌头文件，再构建：
+
+```powershell
+python tools\pack_webui.py
+```
+
 CI 每次推送与打 tag 自动构建 Windows 产物，见 [Actions](https://github.com/Qxyz17/BiliProxy/actions)。
 
 ## 已知限制

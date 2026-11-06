@@ -1,4 +1,4 @@
-// 由 tools/pack_webui.py 生成，内容来自 webui
+// 由 tools/pack_webui.py 生成，内容来自 src/webui
 #pragma once
 
 static const char* kWebUiCss = R"BPWEB(#bpRail, #bpRail *, #bpPanel, #bpPanel *, #bpDlPop, #bpDlPop * { box-sizing: border-box; }

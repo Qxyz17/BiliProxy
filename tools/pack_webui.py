@@ -1,9 +1,9 @@
-"""把 webui/app.js 与 webui/app.css 打包成 src/webui_html.h。"""
+"""把 src/webui/app.js 与 app.css 打包成 src/webui_html.h。"""
 import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, 'webui')
+SRC = os.path.join(ROOT, 'src', 'webui')
 DST = os.path.join(ROOT, 'src', 'webui_html.h')
 
 DELIM = 'BPWEB'
@@ -26,7 +26,7 @@ def main():
             print('%s 里出现了 %s，无法内联' % (name, bad))
             return 1
 
-    out = '// 由 tools/pack_webui.py 生成，内容来自 webui\n#pragma once\n\n'
+    out = '// 由 tools/pack_webui.py 生成，内容来自 src/webui\n#pragma once\n\n'
     out += 'static const char* kWebUiCss = R"%s(%s)%s";\n\n' % (DELIM, css, DELIM)
     out += 'static const char* kWebUiJs = R"%s(%s)%s";\n' % (DELIM, js, DELIM)
 
