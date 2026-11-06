@@ -143,14 +143,39 @@ static const char* kWebUiCss = R"BPWEB(#bpRail, #bpRail *, #bpPanel, #bpPanel *,
 .bpMsg.sys { align-self: center; background: transparent; color: #9499a0; font-size: 12px; padding: 2px 0; }
 .bpMsg p { margin: 0 0 7px; }
 .bpMsg p:last-child { margin-bottom: 0; }
-.bpMsg ul { margin: 5px 0; padding-left: 18px; }
+.bpMsg ul, .bpMsg ol { margin: 5px 0; padding-left: 20px; }
+.bpMsg ul { list-style: disc; }
+.bpMsg ol { list-style: decimal; }
 .bpMsg li { margin: 2px 0; }
+.bpMsg li > p { margin: 0; }
 .bpMsg code { background: rgba(127, 127, 127, .14); padding: 1px 5px; border-radius: 4px;
   font-family: Consolas, Monaco, monospace; font-size: 12px; }
 .bpMsg pre { background: rgba(0, 0, 0, .05); padding: 9px 10px; border-radius: 8px;
   overflow-x: auto; margin: 7px 0; }
-.bpMsg pre code { background: none; padding: 0; }
+.bpMsg pre code { background: none; padding: 0; display: block; white-space: pre;
+  font-size: 12px; line-height: 1.6; }
 .bpMsg strong { font-weight: 600; }
+.bpMsg em { font-style: italic; }
+.bpMsg del { opacity: .6; }
+.bpMsg h3, .bpMsg h4, .bpMsg h5, .bpMsg h6 {
+  margin: 10px 0 5px; line-height: 1.45; font-weight: 600;
+}
+.bpMsg h3 { font-size: 14.5px; }
+.bpMsg h4 { font-size: 13.5px; }
+.bpMsg h5, .bpMsg h6 { font-size: 13px; }
+.bpMsg > h3:first-child, .bpMsg > h4:first-child { margin-top: 0; }
+.bpMsg blockquote {
+  margin: 7px 0; padding: 2px 0 2px 10px;
+  border-left: 3px solid #e6e8eb; color: #6a6f77;
+}
+.bpMsg hr { border: 0; border-top: 1px solid rgba(127, 127, 127, .2); margin: 10px 0; }
+.bpMsg a { color: #fb7299; text-decoration: none; border-bottom: 1px solid rgba(251, 114, 153, .35); }
+.bpMsg a:hover { border-bottom-color: #fb7299; }
+.bpMsg img { max-width: 100%; border-radius: 6px; display: block; margin: 6px 0; }
+.bpMsg table { border-collapse: collapse; width: 100%; margin: 7px 0; font-size: 12px; }
+.bpMsg th, .bpMsg td { border: 1px solid #e3e5e7; padding: 5px 7px; text-align: left; }
+.bpMsg th { background: rgba(127, 127, 127, .06); font-weight: 600; }
+.bpMsg td { vertical-align: top; }
 
 /* ---------------- 输入区 ---------------- */
 .bpComposer {
@@ -576,6 +601,11 @@ static const char* kWebUiJs = R"BPWEB(// BiliProxy 页面侧边栏：下载 + AI
     return false;
   }
 
+  // 只有错误里真的提到图片/视觉才降级，普通 400 不能当成不支持图片
+  function isImageReject(msg) {
+    return /image|vision|multimodal|image_url|含图|图片|图像/i.test(msg);
+  }
+
   // 模型不收图时会整条拒绝，降级成只要文字重发一次
   function dropImages(messages) {
     return messages.map(function (m) {
@@ -593,8 +623,8 @@ static const char* kWebUiJs = R"BPWEB(// BiliProxy 页面侧边栏：下载 + AI
       return await callAI(messages);
     } catch (e) {
       var msg = String(e && e.message || e);
-      if (hasImages(messages) && /400|invalid|unsupported|image/i.test(msg)) {
-        addMsg("sys", "当前模型不收画面帧，改为只发文字重试");
+      if (hasImages(messages) && isImageReject(msg)) {
+        addMsg("sys", "接口拒绝了图片输入，改为只发文字重试");
         return await callAI(dropImages(messages));
       }
       throw e;
@@ -945,18 +975,135 @@ static const char* kWebUiJs = R"BPWEB(// BiliProxy 页面侧边栏：下载 + AI
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
+  function inlineMd(s) {
+    s = escapeHtml(s);
+    s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+    s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, function (m, alt, url) {
+      if (!/^(https?:|data:image\/)/i.test(url)) return m;
+      return '<img alt="' + alt + '" src="' + url + '">';
+    });
+    s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (m, txt, url) {
+      if (!/^https?:/i.test(url)) return m;
+      return '<a href="' + url + '" target="_blank" rel="noreferrer">' + txt + "</a>";
+    });
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
+    s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+    s = s.replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+    return s;
+  }
+
+  // 行块级解析：代码块先摘出来，剩下的逐行收成段落/列表/引用/表格
   function md(text) {
-    var h = escapeHtml(text);
-    h = h.replace(/```([\s\S]*?)```/g, function (m, c) { return "<pre><code>" + c.replace(/^\w*\n/, "") + "</code></pre>"; });
-    h = h.replace(/`([^`]+)`/g, "<code>$1</code>");
-    h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    h = h.replace(/^#{1,6}\s+(.*)$/gm, "<strong>$1</strong>");
-    h = h.replace(/^\s*[-*]\s+(.*)$/gm, "<li>$1</li>");
-    h = h.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, "<ul>$1</ul>");
-    h = h.replace(/^\s*\d+\.\s+(.*)$/gm, "<li>$1</li>");
-    h = h.replace(/\n{2,}/g, "</p><p>");
-    h = h.replace(/\n/g, "<br>");
-    return "<p>" + h + "</p>";
+    var src = String(text == null ? "" : text).replace(/\r\n?/g, "\n");
+    var blocks = [];
+
+    src = src.replace(/^[ \t]*```([^\n`]*)\n([\s\S]*?)^[ \t]*```[ \t]*$/gm,
+      function (m, lang, code) {
+        blocks.push({ lang: String(lang).trim(), code: code.replace(/\n$/, "") });
+        return "\u0001" + (blocks.length - 1) + "\u0001";
+      });
+
+    var lines = src.split("\n");
+    var out = [], para = [], quote = [], list = null, table = null;
+
+    function flushPara() {
+      if (!para.length) return;
+      out.push("<p>" + para.map(inlineMd).join("<br>") + "</p>");
+      para = [];
+    }
+    function flushList() {
+      if (!list) return;
+      out.push("<" + list.tag + ">" + list.items.map(function (t) {
+        return "<li>" + inlineMd(t) + "</li>";
+      }).join("") + "</" + list.tag + ">");
+      list = null;
+    }
+    function flushQuote() {
+      if (!quote.length) return;
+      out.push("<blockquote>" + quote.map(inlineMd).join("<br>") + "</blockquote>");
+      quote = [];
+    }
+    function flushTable() {
+      if (!table) return;
+      var h = "<table><thead><tr>";
+      for (var i = 0; i < table.head.length; i++) h += "<th>" + inlineMd(table.head[i]) + "</th>";
+      h += "</tr></thead><tbody>";
+      for (var r = 0; r < table.rows.length; r++) {
+        h += "<tr>";
+        for (var c = 0; c < table.head.length; c++)
+          h += "<td>" + inlineMd(table.rows[r][c] || "") + "</td>";
+        h += "</tr>";
+      }
+      out.push(h + "</tbody></table>");
+      table = null;
+    }
+    function flushAll() { flushPara(); flushList(); flushQuote(); flushTable(); }
+
+    function splitRow(l) {
+      var t = l.trim().replace(/^\|/, "").replace(/\|$/, "");
+      return t.split("|").map(function (x) { return x.trim(); });
+    }
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+
+      var ph = line.match(/^\u0001(\d+)\u0001\s*$/);
+      if (ph) {
+        flushAll();
+        var b = blocks[+ph[1]] || { lang: "", code: "" };
+        out.push('<pre><code' + (b.lang ? ' class="lang-' + escapeHtml(b.lang) + '"' : "") +
+                 ">" + escapeHtml(b.code) + "</code></pre>");
+        continue;
+      }
+
+      if (!line.trim()) { flushAll(); continue; }
+
+      var hm = line.match(/^(#{1,6})\s+(.*)$/);
+      if (hm) {
+        flushAll();
+        var lv = Math.min(6, Math.max(3, hm[1].length + 2));
+        out.push("<h" + lv + ">" + inlineMd(hm[2]) + "</h" + lv + ">");
+        continue;
+      }
+
+      if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line)) { flushAll(); out.push("<hr>"); continue; }
+
+      if (/^\s*>\s?/.test(line)) {
+        flushPara(); flushList(); flushTable();
+        quote.push(line.replace(/^\s*>\s?/, ""));
+        continue;
+      }
+
+      // 表格：表头 + 分隔行
+      if (line.indexOf("|") >= 0 && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1])) {
+        flushPara(); flushList(); flushQuote();
+        table = { head: splitRow(line), rows: [] };
+        i++;
+        continue;
+      }
+      if (table && line.indexOf("|") >= 0) { table.rows.push(splitRow(line)); continue; }
+
+      var ul = line.match(/^\s*[-*+]\s+(.*)$/);
+      if (ul) {
+        flushPara(); flushQuote(); flushTable();
+        if (!list || list.tag !== "ul") { flushList(); list = { tag: "ul", items: [] }; }
+        list.items.push(ul[1]);
+        continue;
+      }
+      var ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+      if (ol) {
+        flushPara(); flushQuote(); flushTable();
+        if (!list || list.tag !== "ol") { flushList(); list = { tag: "ol", items: [] }; }
+        list.items.push(ol[1]);
+        continue;
+      }
+
+      flushList(); flushTable();
+      para.push(line);
+    }
+    flushAll();
+    return out.join("");
   }
 
   function addMsg(role, text, isMd) {

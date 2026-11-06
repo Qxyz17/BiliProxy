@@ -140,14 +140,39 @@
 .bpMsg.sys { align-self: center; background: transparent; color: #9499a0; font-size: 12px; padding: 2px 0; }
 .bpMsg p { margin: 0 0 7px; }
 .bpMsg p:last-child { margin-bottom: 0; }
-.bpMsg ul { margin: 5px 0; padding-left: 18px; }
+.bpMsg ul, .bpMsg ol { margin: 5px 0; padding-left: 20px; }
+.bpMsg ul { list-style: disc; }
+.bpMsg ol { list-style: decimal; }
 .bpMsg li { margin: 2px 0; }
+.bpMsg li > p { margin: 0; }
 .bpMsg code { background: rgba(127, 127, 127, .14); padding: 1px 5px; border-radius: 4px;
   font-family: Consolas, Monaco, monospace; font-size: 12px; }
 .bpMsg pre { background: rgba(0, 0, 0, .05); padding: 9px 10px; border-radius: 8px;
   overflow-x: auto; margin: 7px 0; }
-.bpMsg pre code { background: none; padding: 0; }
+.bpMsg pre code { background: none; padding: 0; display: block; white-space: pre;
+  font-size: 12px; line-height: 1.6; }
 .bpMsg strong { font-weight: 600; }
+.bpMsg em { font-style: italic; }
+.bpMsg del { opacity: .6; }
+.bpMsg h3, .bpMsg h4, .bpMsg h5, .bpMsg h6 {
+  margin: 10px 0 5px; line-height: 1.45; font-weight: 600;
+}
+.bpMsg h3 { font-size: 14.5px; }
+.bpMsg h4 { font-size: 13.5px; }
+.bpMsg h5, .bpMsg h6 { font-size: 13px; }
+.bpMsg > h3:first-child, .bpMsg > h4:first-child { margin-top: 0; }
+.bpMsg blockquote {
+  margin: 7px 0; padding: 2px 0 2px 10px;
+  border-left: 3px solid #e6e8eb; color: #6a6f77;
+}
+.bpMsg hr { border: 0; border-top: 1px solid rgba(127, 127, 127, .2); margin: 10px 0; }
+.bpMsg a { color: #fb7299; text-decoration: none; border-bottom: 1px solid rgba(251, 114, 153, .35); }
+.bpMsg a:hover { border-bottom-color: #fb7299; }
+.bpMsg img { max-width: 100%; border-radius: 6px; display: block; margin: 6px 0; }
+.bpMsg table { border-collapse: collapse; width: 100%; margin: 7px 0; font-size: 12px; }
+.bpMsg th, .bpMsg td { border: 1px solid #e3e5e7; padding: 5px 7px; text-align: left; }
+.bpMsg th { background: rgba(127, 127, 127, .06); font-weight: 600; }
+.bpMsg td { vertical-align: top; }
 
 /* ---------------- 输入区 ---------------- */
 .bpComposer {
