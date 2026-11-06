@@ -97,33 +97,36 @@ std::string filterPlayurlJson(const std::string& body, int want) {
 
 
 // 只隐藏弹窗，不从 DOM 里摘除：B 站的播放器挂在同一棵树上，删节点会把播放状态一起带走
+// 弹窗盖住时会连带暂停，藏掉后补一次 play；用户自己按的暂停要记住，别去顶掉
 static const char* kNoLoginSnippet =
     "<script>(function(){if(window.__biliproxyNoLogin)return;window.__biliproxyNoLogin=1;"
-    "var last=0,styled=false;"
+    "var act=0,userPaused=false,styled=false;"
     "function style(){if(styled)return;styled=true;var s=document.createElement('style');"
     "s.textContent='.__bpNoLogin{display:none!important;visibility:hidden!important;"
     "pointer-events:none!important}';"
     "(document.head||document.documentElement).appendChild(s);}"
-    "function isLogin(e){var n=e.target;while(n&&n.nodeType===1){"
-    "if(/login|unlogin/i.test(String(n.className||'')))return true;n=n.parentNode;}return false;}"
-    "['pointerdown','mousedown','keydown','touchstart'].forEach(function(t){"
-    "document.addEventListener(t,function(e){last=Date.now()+(isLogin(e)?15000:0);},true);});"
-    "function auto(){return Date.now()>last+1200;}"
+    "function touch(){act=Date.now();}"
+    "['pointerdown','mousedown','keydown','touchstart','wheel'].forEach(function(t){"
+    "document.addEventListener(t,touch,true);});"
+    "function hook(){var v=document.querySelector('video');"
+    "if(!v||v.__bpHook)return;v.__bpHook=1;"
+    "v.addEventListener('pause',function(){if(Date.now()-act<800)userPaused=true;});"
+    "v.addEventListener('play',function(){userPaused=false;});}"
     "function resume(){var v=document.querySelector('video');"
-    "if(!v||!v.paused||v.ended)return;"
+    "if(!v||!v.paused||v.ended||userPaused)return;"
     "if(!(v.currentTime>0))return;"
     "var q=v.play();if(q&&q.catch)q.catch(function(){});}"
-    "function sweep(){if(!auto())return;style();"
+    "function sweep(){style();hook();"
     "var n=document.querySelectorAll('[class*=\"bili-mini\"],[class*=\"login-pwd-wp\"]');"
+    "if(!n.length)return;"
+    "var fresh=0;"
     "for(var i=0;i<n.length;i++){var el=n[i];"
-    "if(el.className.indexOf('__bpNoLogin')<0)el.className+=' __bpNoLogin';}"
-    "if(n.length&&document.body)document.body.style.overflow='';}"
-    "function tick(){sweep();"
-    "var v=document.querySelector('video');"
-    "if(v&&v.paused&&!v.ended&&v.currentTime>0)resume();}"
-    "if(document.documentElement)new MutationObserver(function(){setTimeout(tick,400);})"
+    "if(el.className.indexOf('__bpNoLogin')<0){el.className+=' __bpNoLogin';fresh++;}}"
+    "if(document.body)document.body.style.overflow='';"
+    "if(fresh)setTimeout(resume,400);}"
+    "if(document.documentElement)new MutationObserver(function(){setTimeout(sweep,300);})"
     ".observe(document.documentElement,{childList:true,subtree:true});"
-    "setInterval(tick,1200);})();</script>";
+    "setInterval(sweep,1200);})();</script>";
 std::string injectNoLogin(const std::string& html) {
     size_t p = html.find("</head>");
     if (p == std::string::npos) p = html.find("</HEAD>");

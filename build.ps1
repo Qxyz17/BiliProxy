@@ -7,6 +7,23 @@ $exe  = Join-Path $root 'bin\BiliProxy.exe'
 
 New-Item -ItemType Directory -Force $obj, (Join-Path $root 'bin') | Out-Null
 
+# release previous build outputs before linking
+Get-Process BiliProxy -ErrorAction SilentlyContinue | ForEach-Object {
+    try { $_.Kill(); $_.WaitForExit(3000) | Out-Null } catch {}
+}
+foreach ($f in @($exe, (Join-Path $obj 'bp_link.exe'))) {
+    if (-not (Test-Path $f)) { continue }
+    $free = $false
+    for ($i = 0; $i -lt 20; $i++) {
+        try {
+            $fs = [IO.File]::Open($f, 'Open', 'ReadWrite', 'None')
+            $fs.Close()
+            $free = $true
+            break
+        } catch { Start-Sleep -Milliseconds 250 }
+    }
+    if (-not $free) { throw "file in use, close BiliProxy first: $f" }
+}
 $msysBin = if ($env:MSYS2_BIN) { $env:MSYS2_BIN } else { 'C:\msys64\mingw64\bin' }
 $env:Path = "$msysBin;" + $env:Path
 $gpp  = Join-Path $msysBin 'g++.exe'
