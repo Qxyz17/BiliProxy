@@ -41,6 +41,10 @@ struct Settings {
     int  codec      = 7;
     bool blockLogin = true;
     bool autostart  = true;
+    bool startupAnim = true;
+    bool webAnim    = true;
+    bool chatPanel  = true;
+    bool downloadBtn = true;
 };
 
 extern Settings      g_cfg;

@@ -17,8 +17,24 @@ int AppMain(HINSTANCE hInst, const std::wstring& cmd) {
 
     wchar_t appdata[MAX_PATH] = {};
     if (!GetEnvironmentVariableW(L"LOCALAPPDATA", appdata, MAX_PATH))
-        SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, appdata);
+        SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata);
     g_dir = std::wstring(appdata) + L"\\BiliProxy";
+
+    if (cmd.find(L"--pac-watch") != std::wstring::npos) {
+        size_t p = cmd.find(L"--pac-watch");
+        DWORD pid = (DWORD)_wtoi(cmd.c_str() + p + 11);
+        HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, pid);
+        if (h) {
+            WaitForSingleObject(h, INFINITE);
+            CloseHandle(h);
+        }
+        WSADATA wsa{};
+        WSAStartup(MAKEWORD(2, 2), &wsa);
+        setPac(false);
+        WSACleanup();
+        return 0;
+    }
+
     CreateDirectoryW(g_dir.c_str(), nullptr);
     CreateDirectoryW((g_dir + L"\\certs").c_str(), nullptr);
     g_dirU8 = U8(g_dir);
@@ -94,7 +110,6 @@ int AppMain(HINSTANCE hInst, const std::wstring& cmd) {
         }
         RemoveAllAutostart();
         if (g_cfg.autostart) addAutostart(ensureInstalledCopy());
-        setPac(true);
     }
 
     HANDLE hSingle = CreateMutexW(nullptr, TRUE, L"Local\\BiliProxySingleton");
@@ -123,6 +138,25 @@ int AppMain(HINSTANCE hInst, const std::wstring& cmd) {
         return 1;
     }
 
+    // 代理监听成功后才挂 PAC，否则浏览器会一直等一个不存在的 PAC 地址
+    if (!noInstall) setPac(true);
+
+    // 外层看门狗：本进程被强杀时子进程负责清 PAC，避免浏览器卡在死地址上
+    if (!noInstall) {
+        wchar_t self[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, self, MAX_PATH);
+        std::wstring cmd = L"\"" + std::wstring(self) + L"\" --pac-watch " +
+                           std::to_wstring(GetCurrentProcessId());
+        STARTUPINFOW si{};
+        si.cb = sizeof si;
+        PROCESS_INFORMATION pi{};
+        if (CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE,
+                           CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+        }
+    }
+
     bool forceShow = !files.empty();
     if (!CreateMainWindow(hInst, !autostart || forceShow)) return 1;
 
@@ -131,7 +165,7 @@ int AppMain(HINSTANCE hInst, const std::wstring& cmd) {
         ShowLocalPage();
     }
 
-    if (!autostart) RunFatalityOverlay();
+    if (!autostart && g_cfg.startupAnim) RunFatalityOverlay();
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
@@ -140,7 +174,7 @@ int AppMain(HINSTANCE hInst, const std::wstring& cmd) {
     }
 
     DestroyGui();
-    if (!noInstall) setPac(false);
+    setPac(false);
     if (g_logFile) fclose(g_logFile);
     WSACleanup();
     return 0;

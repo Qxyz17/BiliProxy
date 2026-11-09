@@ -6,6 +6,7 @@
 #include <gdiplus.h>
 #include <shlobj.h>
 #include <commdlg.h>
+#include <cmath>
 
 using namespace Gdiplus;
 
@@ -14,10 +15,13 @@ enum {
     IDC_TOGGLE_NOLOGIN, IDC_TOGGLE_AUTOSTART,
     IDC_BTN_LOG, IDC_BTN_QUIT, IDC_BTN_CLOSE,
     IDC_TAB_WEB, IDC_TAB_LOCAL,
-    IDC_DROP, IDC_BTN_PICK, IDC_BTN_CLEAR, IDC_BTN_OPENDIR,
+    IDC_DROP, IDC_BTN_CLEAR, IDC_BTN_OPENDIR,
     IDC_LC_AVC, IDC_LC_HEVC, IDC_LC_AV1,   // 本地转码目标编码
     IDC_LV_L40, IDC_LV_L41, IDC_LV_L50,    // 兼容等级
-    IDC_LB_BASE                            // 强制 baseline
+    IDC_LB_BASE,                           // 强制 baseline
+    IDC_BTN_SETTINGS, IDC_SETTINGS_CLOSE, IDC_SETTINGS_MASK,
+    IDC_TOGGLE_STARTUP_ANIM, IDC_TOGGLE_WEB_ANIM,
+    IDC_TOGGLE_CHAT, IDC_TOGGLE_DOWNLOAD
 };
 static const int kW = 560;
 static const int kH = 520;
@@ -43,9 +47,12 @@ static int g_page = 0;   // 0=网页 1=本地
 static RECT g_rcAuto{}, g_rcAvc{}, g_rcHevc{}, g_rcAv1{};
 static RECT g_rcNoLogin{}, g_rcAutostart{}, g_rcLog{}, g_rcQuit{}, g_rcClose{};
 static RECT g_rcTabWeb{}, g_rcTabLocal{};
-static RECT g_rcDrop{}, g_rcPick{}, g_rcClear{}, g_rcOpenDir{};
+static RECT g_rcDrop{}, g_rcClear{}, g_rcOpenDir{};
 static RECT g_rcLcAvc{}, g_rcLcHevc{}, g_rcLcAv1{};
 static RECT g_rcLvL40{}, g_rcLvL41{}, g_rcLvL50{}, g_rcLbBase{};
+static RECT g_rcSettings{}, g_rcSetPanel{}, g_rcSetClose{};
+static RECT g_rcSetStartup{}, g_rcSetWebAnim{}, g_rcSetChat{}, g_rcSetDownload{};
+static bool g_settingsOpen = false;
 
 static void InitLayout() {
     const int pad = 20, gap = 12;
@@ -61,6 +68,17 @@ static void InitLayout() {
     SetRect(&g_rcLog, pad, 448, pad + 96, 448 + 34);
     SetRect(&g_rcQuit, kW - pad - 96, 448, kW - pad, 448 + 34);
     SetRect(&g_rcClose, kW - 40, 8, kW - 12, 36);
+    SetRect(&g_rcSettings, kW - 76, 8, kW - 48, 36);
+
+    // 设置浮层
+    const int pw = 340, ph = 268;
+    const int px = (kW - pw) / 2, py = (kH - ph) / 2;
+    SetRect(&g_rcSetPanel, px, py, px + pw, py + ph);
+    SetRect(&g_rcSetClose, px + pw - 32, py + 8, px + pw - 8, py + 32);
+    SetRect(&g_rcSetStartup, px + 16, py + 56,  px + pw - 16, py + 92);
+    SetRect(&g_rcSetWebAnim, px + 16, py + 96,  px + pw - 16, py + 132);
+    SetRect(&g_rcSetChat,    px + 16, py + 136, px + pw - 16, py + 172);
+    SetRect(&g_rcSetDownload, px + 16, py + 176, px + pw - 16, py + 212);
 
     SetRect(&g_rcTabWeb, pad, 52, pad + 96, 84);
     SetRect(&g_rcTabLocal, pad + 104, 52, pad + 200, 84);
@@ -79,8 +97,7 @@ static void InitLayout() {
     SetRect(&g_rcLvL50,  pad + lcw * 2 + 16,        244, kW - pad,               272);
     SetRect(&g_rcLbBase, pad,                       280, kW - pad,               296);
 
-    SetRect(&g_rcPick, pad, 462, pad + 116, 494);
-    SetRect(&g_rcClear, pad + 126, 462, pad + 242, 494);
+    SetRect(&g_rcClear, pad, 462, pad + 116, 494);
     SetRect(&g_rcOpenDir, kW - pad - 116, 462, kW - pad, 494);
 }
 
@@ -259,7 +276,7 @@ static void DrawLocalPage(Graphics& g) {
     bool tools = TranscodeToolsPresent();
     FillRound(g, g_rcDrop, 10.0f, g_hover == IDC_DROP ? kControlHover : kSurface,
               kBorder, 1.0f);
-    RECT t1{ g_rcDrop.left, g_rcDrop.top + 16, g_rcDrop.right, g_rcDrop.top + 44 };
+    RECT t1{ g_rcDrop.left, g_rcDrop.top, g_rcDrop.right, g_rcDrop.bottom };
     DrawStr(g, tools ? L"把视频拖到这里，或点击选择文件" : L"缺少 ffmpeg",
             t1, 14.0f, tools ? kText : kDanger, false, true);
 
@@ -298,9 +315,42 @@ static void DrawLocalPage(Graphics& g) {
         DrawStr(g, buf, mr, 11.0f, kSecondary, false, true);
     }
 
-    DrawButton(g, g_rcPick, L"选择文件", g_hover == IDC_BTN_PICK);
     DrawButton(g, g_rcClear, L"清除已完成", g_hover == IDC_BTN_CLEAR);
     DrawButton(g, g_rcOpenDir, L"打开输出目录", g_hover == IDC_BTN_OPENDIR);
+}
+
+static void DrawGear(Graphics& g, const RECT& rc, bool hover) {
+    if (hover) FillRound(g, rc, 6.0f, kControlHover, kBorder, 1.0f);
+    const REAL cx = (REAL)(rc.left + rc.right) / 2.0f;
+    const REAL cy = (REAL)(rc.top + rc.bottom) / 2.0f;
+    const REAL rOuter = 8.0f, rInner = 3.2f;
+    Pen pen(kSecondary, 1.6f);
+    g.DrawEllipse(&pen, cx - rOuter, cy - rOuter, rOuter * 2, rOuter * 2);
+    Pen pen2(kSecondary, 1.6f);
+    g.DrawEllipse(&pen2, cx - rInner, cy - rInner, rInner * 2, rInner * 2);
+    for (int i = 0; i < 8; ++i) {
+        REAL a = (REAL)i * 3.14159265f / 4.0f;
+        REAL x1 = cx + cosf(a) * rOuter, y1 = cy + sinf(a) * rOuter;
+        REAL x2 = cx + cosf(a) * (rOuter + 3.0f), y2 = cy + sinf(a) * (rOuter + 3.0f);
+        g.DrawLine(&pen, x1, y1, x2, y2);
+    }
+}
+
+static void DrawSettingsOverlay(Graphics& g) {
+    SolidBrush mask(Color(120, 0, 0, 0));
+    g.FillRectangle(&mask, 0, 0, kW, kH);
+
+    FillRound(g, g_rcSetPanel, 10.0f, kSurface, kBorder, 1.0f);
+    RECT tr{ g_rcSetPanel.left + 16, g_rcSetPanel.top + 10, g_rcSetPanel.right - 40, g_rcSetPanel.top + 38 };
+    DrawStr(g, L"设置", tr, 15.0f, kText, true);
+
+    if (g_hover == IDC_SETTINGS_CLOSE) FillRound(g, g_rcSetClose, 4.0f, kControlHover, kBorder, 1.0f);
+    DrawStr(g, L"✕", g_rcSetClose, 12.0f, kSecondary, false, true);
+
+    DrawToggleRow(g, g_rcSetStartup, L"启动动画", g_cfg.startupAnim, g_hover == IDC_TOGGLE_STARTUP_ANIM);
+    DrawToggleRow(g, g_rcSetWebAnim, L"网页动画", g_cfg.webAnim, g_hover == IDC_TOGGLE_WEB_ANIM);
+    DrawToggleRow(g, g_rcSetChat, L"对话", g_cfg.chatPanel, g_hover == IDC_TOGGLE_CHAT);
+    DrawToggleRow(g, g_rcSetDownload, L"下载", g_cfg.downloadBtn, g_hover == IDC_TOGGLE_DOWNLOAD);
 }
 
 static void OnPaint(HWND hwnd) {
@@ -319,6 +369,7 @@ static void OnPaint(HWND hwnd) {
 
     RECT tr{ 20, 6, kW - 56, 42 };
     DrawStr(g, L"BiliProxy", tr, 24.0f, kText, true);
+    DrawGear(g, g_rcSettings, g_hover == IDC_BTN_SETTINGS);
     if (g_hover == IDC_BTN_CLOSE) FillRound(g, g_rcClose, 4.0f, kControlHover, kBorder, 1.0f);
     DrawStr(g, L"✕", g_rcClose, 13.0f, kSecondary, false, true);
 
@@ -330,6 +381,8 @@ static void OnPaint(HWND hwnd) {
     RECT ft{ 20, 500, kW - 20, 518 };
     DrawStr(g, L"Made by Qxyz17", ft, 11.0f, kSecondary, false, false, true);
 
+    if (g_settingsOpen) DrawSettingsOverlay(g);
+
     BitBlt(hdc, 0, 0, kW, kH, mem, 0, 0, SRCCOPY);
     SelectObject(mem, old);
     DeleteObject(bmp);
@@ -338,6 +391,16 @@ static void OnPaint(HWND hwnd) {
 }
 
 static int HitTest(POINT pt) {
+    if (g_settingsOpen) {
+        if (PtInRect(&g_rcSetClose, pt)) return IDC_SETTINGS_CLOSE;
+        if (PtInRect(&g_rcSetStartup, pt)) return IDC_TOGGLE_STARTUP_ANIM;
+        if (PtInRect(&g_rcSetWebAnim, pt)) return IDC_TOGGLE_WEB_ANIM;
+        if (PtInRect(&g_rcSetChat, pt)) return IDC_TOGGLE_CHAT;
+        if (PtInRect(&g_rcSetDownload, pt)) return IDC_TOGGLE_DOWNLOAD;
+        if (PtInRect(&g_rcSetPanel, pt)) return 0;
+        return IDC_SETTINGS_MASK;
+    }
+    if (PtInRect(&g_rcSettings, pt)) return IDC_BTN_SETTINGS;
     if (PtInRect(&g_rcClose, pt)) return IDC_BTN_CLOSE;
     if (PtInRect(&g_rcTabWeb, pt)) return IDC_TAB_WEB;
     if (PtInRect(&g_rcTabLocal, pt)) return IDC_TAB_LOCAL;
@@ -352,7 +415,6 @@ static int HitTest(POINT pt) {
         if (PtInRect(&g_rcQuit, pt)) return IDC_BTN_QUIT;
     } else {
         if (PtInRect(&g_rcDrop, pt)) return IDC_DROP;
-        if (PtInRect(&g_rcPick, pt)) return IDC_BTN_PICK;
         if (PtInRect(&g_rcClear, pt)) return IDC_BTN_CLEAR;
         if (PtInRect(&g_rcOpenDir, pt)) return IDC_BTN_OPENDIR;
         if (PtInRect(&g_rcLcAvc, pt)) return IDC_LC_AVC;
@@ -393,6 +455,10 @@ static void ApplySetting(int id) {
         case IDC_CARD_AV1:  g_cfg.codec = 13; break;
         case IDC_TOGGLE_NOLOGIN: g_cfg.blockLogin = !g_cfg.blockLogin; break;
         case IDC_TOGGLE_AUTOSTART: g_cfg.autostart = !g_cfg.autostart; break;
+        case IDC_TOGGLE_STARTUP_ANIM: g_cfg.startupAnim = !g_cfg.startupAnim; break;
+        case IDC_TOGGLE_WEB_ANIM: g_cfg.webAnim = !g_cfg.webAnim; break;
+        case IDC_TOGGLE_CHAT: g_cfg.chatPanel = !g_cfg.chatPanel; break;
+        case IDC_TOGGLE_DOWNLOAD: g_cfg.downloadBtn = !g_cfg.downloadBtn; break;
         default: return;
     }
     saveConfig();
@@ -544,6 +610,21 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case WM_LBUTTONUP: {
             POINT pt{ GET_X_LPARAM(l), GET_Y_LPARAM(l) };
             int id = HitTest(pt);
+            if (id == IDC_SETTINGS_MASK) {
+                g_settingsOpen = false;
+                InvalidateRect(h, nullptr, FALSE);
+                return 0;
+            }
+            if (id == IDC_SETTINGS_CLOSE) {
+                g_settingsOpen = false;
+                InvalidateRect(h, nullptr, FALSE);
+                return 0;
+            }
+            if (id == IDC_BTN_SETTINGS) {
+                g_settingsOpen = !g_settingsOpen;
+                InvalidateRect(h, nullptr, FALSE);
+                return 0;
+            }
             if (id == IDC_BTN_CLOSE) { ShowWindow(h, SW_HIDE); return 0; }
             if (id == IDC_BTN_QUIT) { PostQuitMessage(0); return 0; }
             if (id == IDC_BTN_LOG) {
@@ -556,7 +637,6 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 return 0;
             }
             if (id == IDC_DROP) { PickFiles(); return 0; }
-            if (id == IDC_BTN_PICK) { PickFiles(); return 0; }
             if (id == IDC_BTN_CLEAR) {
                 TranscodeClearDone();
                 InvalidateRect(h, nullptr, FALSE);
@@ -584,7 +664,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case WM_NCHITTEST: {
             POINT pt{ GET_X_LPARAM(l), GET_Y_LPARAM(l) };
             ScreenToClient(h, &pt);
-            if (pt.y < 48 && !PtInRect(&g_rcClose, pt)) return HTCAPTION;
+            if (g_settingsOpen) return HTCLIENT;
+            if (pt.y < 48 && !PtInRect(&g_rcClose, pt) && !PtInRect(&g_rcSettings, pt)) return HTCAPTION;
             return HTCLIENT;
         }
 

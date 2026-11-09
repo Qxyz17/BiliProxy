@@ -121,11 +121,17 @@ void loadConfig() {
         if (k == "codec") g_cfg.codec = atoi(v.c_str());
         else if (k == "blockLogin") g_cfg.blockLogin = atoi(v.c_str()) != 0;
         else if (k == "autostart") g_cfg.autostart = atoi(v.c_str()) != 0;
+        else if (k == "startupAnim") g_cfg.startupAnim = atoi(v.c_str()) != 0;
+        else if (k == "webAnim") g_cfg.webAnim = atoi(v.c_str()) != 0;
+        else if (k == "chatPanel") g_cfg.chatPanel = atoi(v.c_str()) != 0;
+        else if (k == "downloadBtn") g_cfg.downloadBtn = atoi(v.c_str()) != 0;
     }
     if (g_cfg.codec != 0 && g_cfg.codec != 7 && g_cfg.codec != 12 && g_cfg.codec != 13)
         g_cfg.codec = 7;
-    Log("config: codec=%d blockLogin=%d autostart=%d", g_cfg.codec, g_cfg.blockLogin ? 1 : 0,
-        g_cfg.autostart ? 1 : 0);
+    Log("config: codec=%d blockLogin=%d autostart=%d startupAnim=%d webAnim=%d chatPanel=%d downloadBtn=%d",
+        g_cfg.codec, g_cfg.blockLogin ? 1 : 0, g_cfg.autostart ? 1 : 0,
+        g_cfg.startupAnim ? 1 : 0, g_cfg.webAnim ? 1 : 0,
+        g_cfg.chatPanel ? 1 : 0, g_cfg.downloadBtn ? 1 : 0);
 }
 
 void saveConfig() {
@@ -133,7 +139,11 @@ void saveConfig() {
     if (!f) return;
     f << "codec=" << g_cfg.codec << "\n"
       << "blockLogin=" << (g_cfg.blockLogin ? 1 : 0) << "\n"
-      << "autostart=" << (g_cfg.autostart ? 1 : 0) << "\n";
+      << "autostart=" << (g_cfg.autostart ? 1 : 0) << "\n"
+      << "startupAnim=" << (g_cfg.startupAnim ? 1 : 0) << "\n"
+      << "webAnim=" << (g_cfg.webAnim ? 1 : 0) << "\n"
+      << "chatPanel=" << (g_cfg.chatPanel ? 1 : 0) << "\n"
+      << "downloadBtn=" << (g_cfg.downloadBtn ? 1 : 0) << "\n";
 }
 
 // 本地转码参数单独存 local.ini，避免和网页改写的 codec 互相覆盖

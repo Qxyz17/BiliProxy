@@ -641,10 +641,12 @@ static const char* kWebUiJs = R"BPWEB(// BiliProxy 页面侧边栏：下载 + AI
   }
 
   function buildRail() {
+    var cfg = window.__bpCfg || { dl: 1, chat: 1 };
     var rail = el("div");
     rail.id = "bpRail";
-    rail.appendChild(mkBtn("chat", "对话", ICON.chat, function () { togglePanel(); }));
-    rail.appendChild(mkBtn("down", "下载", ICON.down, function () { toggleDl(); }));
+    if (cfg.chat) rail.appendChild(mkBtn("chat", "对话", ICON.chat, function () { togglePanel(); }));
+    if (cfg.dl) rail.appendChild(mkBtn("down", "下载", ICON.down, function () { toggleDl(); }));
+    if (!rail.children.length) return null;
     document.documentElement.appendChild(rail);
     return rail;
   }
@@ -1231,27 +1233,31 @@ static const char* kWebUiJs = R"BPWEB(// BiliProxy 页面侧边栏：下载 + AI
   /* ================= 启动 ================= */
 
   async function boot() {
+    var cfg = window.__bpCfg || { dl: 1, chat: 1 };
     applyCfg(null, null);
-    buildRail();
-    buildPanel();
-    buildDlPop();
+    if (cfg.chat) buildPanel();
+    if (cfg.dl) buildDlPop();
+    var rail = buildRail();
+    if (!rail) return;
     var s = await storageGet(["baseUrl", "apiKey", "model", "opts"]);
     applyCfg({ base: s.baseUrl || "", key: s.apiKey || "", model: s.model || "" }, s.opts);
-    refreshHead();
+    if (cfg.chat) refreshHead();
 
     document.addEventListener("click", function (e) {
       if (!e.target.closest("#bpRail, #bpPanel, #bpDlPop")) {
-        if ($("#bpDlPop").classList.contains("open")) toggleDl(false);
+        var dp = $("#bpDlPop");
+        if (dp && dp.classList.contains("open")) toggleDl(false);
       }
     }, true);
     window.addEventListener("resize", function () {
-      if ($("#bpDlPop").classList.contains("open")) positionDl();
+      var dp = $("#bpDlPop");
+      if (dp && dp.classList.contains("open")) positionDl();
     });
     window.addEventListener("popstate", function () {
       state.ctx = null; state.history = [];
       var c = $("#bpPanel .bpChat");
       if (c) c.innerHTML = "";
-      refreshHead();
+      if (cfg.chat) refreshHead();
     });
   }
 

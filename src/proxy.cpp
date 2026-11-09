@@ -620,8 +620,8 @@ static void serveTls(SSL* ssl, const std::string& host) {
             lower(getHeader(rh, "content-type")).find("text/html") != std::string::npos &&
             rbody.find("</head>") != std::string::npos) {
             if (g_cfg.blockLogin) rbody = injectNoLogin(rbody);
-            rbody = injectWebUi(rbody);
-            rbody = injectFatality(rbody);
+            if (g_cfg.downloadBtn || g_cfg.chatPanel) rbody = injectWebUi(rbody);
+            if (g_cfg.webAnim) rbody = injectFatality(rbody);
             injected = true;
         }
         if (rewritten) InterlockedIncrement(&g_rewrites);

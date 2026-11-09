@@ -194,8 +194,13 @@ std::string injectWebUi(const std::string& html) {
     size_t p = html.find("</body>");
     if (p == std::string::npos) p = html.find("</html>");
     if (p == std::string::npos) return html;
+    char cfg[128];
+    snprintf(cfg, sizeof cfg,
+             "<script>window.__bpCfg={dl:%d,chat:%d};</script>",
+             g_cfg.downloadBtn ? 1 : 0, g_cfg.chatPanel ? 1 : 0);
     std::string blk = std::string("<style>") + kWebUiCss + "</style>" +
                       kWebUiShim +
+                      std::string(cfg) +
                       std::string("<script>") + kWebUiJs + "</script>";
     std::string out = html;
     out.insert(p, blk);
