@@ -15,6 +15,9 @@ int AppMain(HINSTANCE hInst, const std::wstring& cmd) {
     if (cmd.find(L"--overlay") != std::wstring::npos) { RunFatalityOverlay(); return 0; }
     g_verbose = debug;
 
+    // 不声明 DPI 感知时系统会把自绘窗口整体拉伸，圆角跟着走样
+    SetProcessDPIAware();
+
     wchar_t appdata[MAX_PATH] = {};
     if (!GetEnvironmentVariableW(L"LOCALAPPDATA", appdata, MAX_PATH))
         SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata);

@@ -26,6 +26,21 @@ enum {
 static const int kW = 560;
 static const int kH = 520;
 static const int kCorner = 12;
+static const int kShadow = 10;   // 圆角外留给投影的透明边
+
+// 画布按 DPI 放大，布局坐标仍按 96dpi 写，绘制时统一缩一次
+static int g_scale = 100;    // 百分比
+static int g_cw = kW, g_ch = kH;
+
+static void InitScale() {
+    HDC dc = GetDC(nullptr);
+    int dpi = dc ? GetDeviceCaps(dc, LOGPIXELSX) : 96;
+    if (dc) ReleaseDC(nullptr, dc);
+    if (dpi < 96) dpi = 96;
+    g_scale = dpi * 100 / 96;
+    g_cw = (kW + kShadow * 2) * g_scale / 100;
+    g_ch = (kH + kShadow * 2) * g_scale / 100;
+}
 
 static const Color kWindowBg(255, 243, 243, 243);
 static const Color kSurface(255, 255, 255, 255);
@@ -103,7 +118,8 @@ static void InitLayout() {
 }
 
 static void RoundPath(GraphicsPath& p, const RectF& r, float rad) {
-    float d = rad * 2;
+    const float d = rad * 2;
+    // 四个弧各自起笔，靠 CloseFigure 收口；最后一个弧的终点必须落回起点
     p.AddArc(r.X, r.Y, d, d, 180, 90);
     p.AddArc(r.X + r.Width - d, r.Y, d, d, 270, 90);
     p.AddArc(r.X + r.Width - d, r.Y + r.Height - d, d, d, 0, 90);
@@ -368,8 +384,8 @@ static void OnPaint(HWND hwnd) {
     // 分层窗口要逐像素 alpha，圆角边缘才能抗锯齿；GDI 的 BitBlt 只有 1 位透明
     BITMAPINFO bi{};
     bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-    bi.bmiHeader.biWidth = kW;
-    bi.bmiHeader.biHeight = -kH;                 // top-down
+    bi.bmiHeader.biWidth = g_cw;
+    bi.bmiHeader.biHeight = -g_ch;               // top-down
     bi.bmiHeader.biPlanes = 1;
     bi.bmiHeader.biBitCount = 32;
     bi.bmiHeader.biCompression = BI_RGB;
@@ -383,11 +399,24 @@ static void OnPaint(HWND hwnd) {
         return;
     }
     HGDIOBJ old = SelectObject(mem, bmp);
-    memset(bits, 0, (size_t)kW * kH * 4);
+    memset(bits, 0, (size_t)g_cw * g_ch * 4);
 
     Graphics g(mem);
     g.SetSmoothingMode(SmoothingModeAntiAlias);
     g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
+    g.ScaleTransform((REAL)g_scale / 100.0f, (REAL)g_scale / 100.0f);
+    g.TranslateTransform((REAL)kShadow, (REAL)kShadow);
+
+    // 投影：WPF Fluent 那套 BlurRadius 15 / ShadowDepth 2 / Opacity .15 换算到 GDI+
+    {
+        GraphicsPath sp;
+        RoundPath(sp, RectF(0, 0, (REAL)kW, (REAL)kH), (REAL)kCorner);
+        for (int i = kShadow; i > 0; --i) {
+            int a = (int)(34.0f * (1.0f - (float)i / (kShadow + 1)));
+            Pen pen(Color((BYTE)a, 0, 0, 0), (REAL)(i * 2));
+            g.DrawPath(&pen, &sp);
+        }
+    }
 
     // 圆角外的像素保持全透明，交给 DWM 合成
     SolidBrush bg(kWindowBg);
@@ -405,7 +434,7 @@ static void OnPaint(HWND hwnd) {
     if (g_page == 0) DrawWebPage(g);
     else DrawLocalPage(g);
 
-    RECT ft{ 20, 500, kW - 20, 518 };
+    RECT ft{ 20, 494, kW - 20, 512 };
     DrawStr(g, L"Made by Qxyz17", ft, 11.0f, kSecondary, false, false, true);
 
     if (g_settingsOpen) DrawSettingsOverlay(g);
@@ -416,7 +445,7 @@ static void OnPaint(HWND hwnd) {
     GetWindowRect(hwnd, &wr);
     POINT dst{ wr.left, wr.top };
     POINT src{ 0, 0 };
-    SIZE sz{ kW, kH };
+    SIZE sz{ g_cw, g_ch };
     BLENDFUNCTION bf{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
     UpdateLayeredWindow(hwnd, hdc, &dst, &sz, mem, &src, 0, &bf, ULW_ALPHA);
 
@@ -427,6 +456,13 @@ static void OnPaint(HWND hwnd) {
 }
 
 static int HitTest(POINT pt) {
+    // 布局按 96dpi 写，鼠标坐标要换回同一空间，再去掉投影留边
+    if (g_scale != 100) {
+        pt.x = pt.x * 100 / g_scale;
+        pt.y = pt.y * 100 / g_scale;
+    }
+    pt.x -= kShadow;
+    pt.y -= kShadow;
     if (g_settingsOpen) {
         if (PtInRect(&g_rcSetClose, pt)) return IDC_SETTINGS_CLOSE;
         if (PtInRect(&g_rcSetNoLogin, pt)) return IDC_TOGGLE_NOLOGIN;
@@ -700,6 +736,12 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case WM_NCHITTEST: {
             POINT pt{ GET_X_LPARAM(l), GET_Y_LPARAM(l) };
             ScreenToClient(h, &pt);
+            if (g_scale != 100) {
+                pt.x = pt.x * 100 / g_scale;
+                pt.y = pt.y * 100 / g_scale;
+            }
+            pt.x -= kShadow;
+            pt.y -= kShadow;
             if (g_settingsOpen) return HTCLIENT;
             if (pt.y < 48 && !PtInRect(&g_rcClose, pt) && !PtInRect(&g_rcSettings, pt)) return HTCAPTION;
             return HTCLIENT;
@@ -723,6 +765,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 }
 
 bool CreateMainWindow(HINSTANCE hInst, bool show) {
+    InitScale();
     InitLayout();
     GdiplusStartupInput gsi;
     GdiplusStartup(&g_gdiToken, &gsi, nullptr);
@@ -739,7 +782,7 @@ bool CreateMainWindow(HINSTANCE hInst, bool show) {
 
     int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
     g_hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED, L"BiliProxyWnd", L"BiliProxy", WS_POPUP,
-                             (sw - kW) / 2, (sh - kH) / 2, kW, kH,
+                             (sw - g_cw) / 2, (sh - g_ch) / 2, g_cw, g_ch,
                              nullptr, nullptr, hInst, nullptr);
     if (!g_hwnd) return false;
 
