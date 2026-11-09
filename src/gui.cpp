@@ -26,7 +26,6 @@ enum {
 static const int kW = 560;
 static const int kH = 520;
 static const int kCorner = 12;
-static const int kShadow = 10;   // 圆角外留给投影的透明边
 
 // 画布按 DPI 放大，布局坐标仍按 96dpi 写，绘制时统一缩一次
 static int g_scale = 100;    // 百分比
@@ -38,8 +37,8 @@ static void InitScale() {
     if (dc) ReleaseDC(nullptr, dc);
     if (dpi < 96) dpi = 96;
     g_scale = dpi * 100 / 96;
-    g_cw = (kW + kShadow * 2) * g_scale / 100;
-    g_ch = (kH + kShadow * 2) * g_scale / 100;
+    g_cw = kW * g_scale / 100;
+    g_ch = kH * g_scale / 100;
 }
 
 static const Color kWindowBg(255, 243, 243, 243);
@@ -405,18 +404,6 @@ static void OnPaint(HWND hwnd) {
     g.SetSmoothingMode(SmoothingModeAntiAlias);
     g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
     g.ScaleTransform((REAL)g_scale / 100.0f, (REAL)g_scale / 100.0f);
-    g.TranslateTransform((REAL)kShadow, (REAL)kShadow);
-
-    // 投影：WPF Fluent 那套 BlurRadius 15 / ShadowDepth 2 / Opacity .15 换算到 GDI+
-    {
-        GraphicsPath sp;
-        RoundPath(sp, RectF(0, 0, (REAL)kW, (REAL)kH), (REAL)kCorner);
-        for (int i = kShadow; i > 0; --i) {
-            int a = (int)(34.0f * (1.0f - (float)i / (kShadow + 1)));
-            Pen pen(Color((BYTE)a, 0, 0, 0), (REAL)(i * 2));
-            g.DrawPath(&pen, &sp);
-        }
-    }
 
     // 圆角外的像素保持全透明，交给 DWM 合成
     SolidBrush bg(kWindowBg);
@@ -456,13 +443,11 @@ static void OnPaint(HWND hwnd) {
 }
 
 static int HitTest(POINT pt) {
-    // 布局按 96dpi 写，鼠标坐标要换回同一空间，再去掉投影留边
+    // 布局按 96dpi 写，鼠标坐标要换回同一空间
     if (g_scale != 100) {
         pt.x = pt.x * 100 / g_scale;
         pt.y = pt.y * 100 / g_scale;
     }
-    pt.x -= kShadow;
-    pt.y -= kShadow;
     if (g_settingsOpen) {
         if (PtInRect(&g_rcSetClose, pt)) return IDC_SETTINGS_CLOSE;
         if (PtInRect(&g_rcSetNoLogin, pt)) return IDC_TOGGLE_NOLOGIN;
@@ -740,8 +725,6 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 pt.x = pt.x * 100 / g_scale;
                 pt.y = pt.y * 100 / g_scale;
             }
-            pt.x -= kShadow;
-            pt.y -= kShadow;
             if (g_settingsOpen) return HTCLIENT;
             if (pt.y < 48 && !PtInRect(&g_rcClose, pt) && !PtInRect(&g_rcSettings, pt)) return HTCAPTION;
             return HTCLIENT;
@@ -777,7 +760,7 @@ bool CreateMainWindow(HINSTANCE hInst, bool show) {
     wc.lpszClassName = L"BiliProxyWnd";
     wc.hCursor = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
     wc.hIcon = LoadIconW(nullptr, (LPCWSTR)IDI_SHIELD);
-    wc.style = CS_DROPSHADOW;
+    wc.style = 0;
     RegisterClassExW(&wc);
 
     int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
