@@ -45,15 +45,15 @@ static int g_hover = 0;
 static int g_page = 0;   // 0=网页 1=本地
 
 static RECT g_rcAuto{}, g_rcAvc{}, g_rcHevc{}, g_rcAv1{};
-static RECT g_rcNoLogin{}, g_rcAutostart{}, g_rcLog{}, g_rcQuit{}, g_rcClose{};
+static RECT g_rcLog{}, g_rcQuit{}, g_rcClose{};
 static RECT g_rcTabWeb{}, g_rcTabLocal{};
 static RECT g_rcDrop{}, g_rcClear{}, g_rcOpenDir{};
 static RECT g_rcLcAvc{}, g_rcLcHevc{}, g_rcLcAv1{};
 static RECT g_rcLvL40{}, g_rcLvL41{}, g_rcLvL50{}, g_rcLbBase{};
 static RECT g_rcSettings{}, g_rcSetPanel{}, g_rcSetClose{};
+static RECT g_rcSetNoLogin{}, g_rcSetAutostart{};
 static RECT g_rcSetStartup{}, g_rcSetWebAnim{}, g_rcSetChat{}, g_rcSetDownload{};
 static bool g_settingsOpen = false;
-
 static void InitLayout() {
     const int pad = 20, gap = 12;
     const int cw = (kW - pad * 2 - gap) / 2, ch = 72;
@@ -63,22 +63,22 @@ static void InitLayout() {
     y += ch + 12;
     SetRect(&g_rcHevc, pad, y, pad + cw, y + ch);
     SetRect(&g_rcAv1, pad + cw + gap, y, pad + cw + gap + cw, y + ch);
-    SetRect(&g_rcNoLogin, pad, 296, kW - pad, 296 + 36);
-    SetRect(&g_rcAutostart, pad, 344, kW - pad, 344 + 36);
-    SetRect(&g_rcLog, pad, 448, pad + 96, 448 + 34);
-    SetRect(&g_rcQuit, kW - pad - 96, 448, kW - pad, 448 + 34);
+    SetRect(&g_rcLog, pad, 380, pad + 96, 380 + 34);
+    SetRect(&g_rcQuit, kW - pad - 96, 380, kW - pad, 380 + 34);
     SetRect(&g_rcClose, kW - 40, 8, kW - 12, 36);
     SetRect(&g_rcSettings, kW - 76, 8, kW - 48, 36);
 
     // 设置浮层
-    const int pw = 340, ph = 268;
+    const int pw = 340, ph = 352;
     const int px = (kW - pw) / 2, py = (kH - ph) / 2;
     SetRect(&g_rcSetPanel, px, py, px + pw, py + ph);
     SetRect(&g_rcSetClose, px + pw - 32, py + 8, px + pw - 8, py + 32);
-    SetRect(&g_rcSetStartup, px + 16, py + 56,  px + pw - 16, py + 92);
-    SetRect(&g_rcSetWebAnim, px + 16, py + 96,  px + pw - 16, py + 132);
-    SetRect(&g_rcSetChat,    px + 16, py + 136, px + pw - 16, py + 172);
-    SetRect(&g_rcSetDownload, px + 16, py + 176, px + pw - 16, py + 212);
+    SetRect(&g_rcSetNoLogin, px + 16, py + 56,  px + pw - 16, py + 92);
+    SetRect(&g_rcSetAutostart, px + 16, py + 96, px + pw - 16, py + 132);
+    SetRect(&g_rcSetStartup, px + 16, py + 136, px + pw - 16, py + 172);
+    SetRect(&g_rcSetWebAnim, px + 16, py + 176, px + pw - 16, py + 212);
+    SetRect(&g_rcSetChat,    px + 16, py + 216, px + pw - 16, py + 252);
+    SetRect(&g_rcSetDownload, px + 16, py + 256, px + pw - 16, py + 292);
 
     SetRect(&g_rcTabWeb, pad, 52, pad + 96, 84);
     SetRect(&g_rcTabLocal, pad + 104, 52, pad + 200, 84);
@@ -206,12 +206,12 @@ static void DrawTabs(Graphics& g) {
 
 static void DrawStatus(Graphics& g) {
     SolidBrush dot(kSuccess);
-    g.FillEllipse(&dot, 20.0f, 412.0f, 8.0f, 8.0f);
+    g.FillEllipse(&dot, 20.0f, 342.0f, 8.0f, 8.0f);
 
     wchar_t buf[128];
     long rw = InterlockedCompareExchange(&g_rewrites, 0, 0);
     swprintf(buf, 128, L"127.0.0.1:%d · 已改写 %ld 次", kPort, rw);
-    RECT sr{ 34, 406, kW - 20, 426 };
+    RECT sr{ 34, 336, kW - 20, 356 };
     DrawStr(g, buf, sr, 12.0f, kSecondary);
 }
 
@@ -223,9 +223,6 @@ static void DrawWebPage(Graphics& g) {
     DrawCard(g, g_rcAvc, g_cfg.codec == 7, g_hover == IDC_CARD_AVC, L"H.264");
     DrawCard(g, g_rcHevc, g_cfg.codec == 12, g_hover == IDC_CARD_HEVC, L"H.265");
     DrawCard(g, g_rcAv1, g_cfg.codec == 13, g_hover == IDC_CARD_AV1, L"AV1");
-
-    DrawToggleRow(g, g_rcNoLogin, L"屏蔽未登录弹窗", g_cfg.blockLogin, g_hover == IDC_TOGGLE_NOLOGIN);
-    DrawToggleRow(g, g_rcAutostart, L"开机自启", g_cfg.autostart, g_hover == IDC_TOGGLE_AUTOSTART);
 
     DrawStatus(g);
 
@@ -347,6 +344,8 @@ static void DrawSettingsOverlay(Graphics& g) {
     if (g_hover == IDC_SETTINGS_CLOSE) FillRound(g, g_rcSetClose, 4.0f, kControlHover, kBorder, 1.0f);
     DrawStr(g, L"✕", g_rcSetClose, 12.0f, kSecondary, false, true);
 
+    DrawToggleRow(g, g_rcSetNoLogin, L"屏蔽未登录弹窗", g_cfg.blockLogin, g_hover == IDC_TOGGLE_NOLOGIN);
+    DrawToggleRow(g, g_rcSetAutostart, L"开机自启", g_cfg.autostart, g_hover == IDC_TOGGLE_AUTOSTART);
     DrawToggleRow(g, g_rcSetStartup, L"启动动画", g_cfg.startupAnim, g_hover == IDC_TOGGLE_STARTUP_ANIM);
     DrawToggleRow(g, g_rcSetWebAnim, L"网页动画", g_cfg.webAnim, g_hover == IDC_TOGGLE_WEB_ANIM);
     DrawToggleRow(g, g_rcSetChat, L"对话", g_cfg.chatPanel, g_hover == IDC_TOGGLE_CHAT);
@@ -393,6 +392,8 @@ static void OnPaint(HWND hwnd) {
 static int HitTest(POINT pt) {
     if (g_settingsOpen) {
         if (PtInRect(&g_rcSetClose, pt)) return IDC_SETTINGS_CLOSE;
+        if (PtInRect(&g_rcSetNoLogin, pt)) return IDC_TOGGLE_NOLOGIN;
+        if (PtInRect(&g_rcSetAutostart, pt)) return IDC_TOGGLE_AUTOSTART;
         if (PtInRect(&g_rcSetStartup, pt)) return IDC_TOGGLE_STARTUP_ANIM;
         if (PtInRect(&g_rcSetWebAnim, pt)) return IDC_TOGGLE_WEB_ANIM;
         if (PtInRect(&g_rcSetChat, pt)) return IDC_TOGGLE_CHAT;
@@ -409,8 +410,6 @@ static int HitTest(POINT pt) {
         if (PtInRect(&g_rcAvc, pt)) return IDC_CARD_AVC;
         if (PtInRect(&g_rcHevc, pt)) return IDC_CARD_HEVC;
         if (PtInRect(&g_rcAv1, pt)) return IDC_CARD_AV1;
-        if (PtInRect(&g_rcNoLogin, pt)) return IDC_TOGGLE_NOLOGIN;
-        if (PtInRect(&g_rcAutostart, pt)) return IDC_TOGGLE_AUTOSTART;
         if (PtInRect(&g_rcLog, pt)) return IDC_BTN_LOG;
         if (PtInRect(&g_rcQuit, pt)) return IDC_BTN_QUIT;
     } else {
