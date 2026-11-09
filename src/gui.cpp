@@ -25,6 +25,7 @@ enum {
 };
 static const int kW = 560;
 static const int kH = 520;
+static const int kCorner = 12;
 
 static const Color kWindowBg(255, 243, 243, 243);
 static const Color kSurface(255, 255, 255, 255);
@@ -133,6 +134,21 @@ static void DrawStr(Graphics& g, const wchar_t* s, const RECT& rc, float px,
     sf.SetAlignment(center ? StringAlignmentCenter : (right ? StringAlignmentFar : StringAlignmentNear));
     SolidBrush br(c);
     g.DrawString(s, -1, &f,
+                 RectF((REAL)rc.left, (REAL)rc.top, (REAL)(rc.right - rc.left), (REAL)(rc.bottom - rc.top)),
+                 &sf, &br);
+}
+
+// 符号取自 Segoe MDL2 Assets，比手绘路径和文字符号都干净
+static void DrawGlyph(Graphics& g, const wchar_t* ch, const RECT& rc, float px, const Color& c) {
+    FontFamily fam(L"Segoe MDL2 Assets");
+    if (fam.GetLastStatus() != Ok) return;
+    Font f(&fam, px, FontStyleRegular, UnitPixel);
+    StringFormat sf;
+    sf.SetFormatFlags(StringFormatFlagsNoWrap);
+    sf.SetLineAlignment(StringAlignmentCenter);
+    sf.SetAlignment(StringAlignmentCenter);
+    SolidBrush br(c);
+    g.DrawString(ch, -1, &f,
                  RectF((REAL)rc.left, (REAL)rc.top, (REAL)(rc.right - rc.left), (REAL)(rc.bottom - rc.top)),
                  &sf, &br);
 }
@@ -318,19 +334,12 @@ static void DrawLocalPage(Graphics& g) {
 
 static void DrawGear(Graphics& g, const RECT& rc, bool hover) {
     if (hover) FillRound(g, rc, 6.0f, kControlHover, kBorder, 1.0f);
-    const REAL cx = (REAL)(rc.left + rc.right) / 2.0f;
-    const REAL cy = (REAL)(rc.top + rc.bottom) / 2.0f;
-    const REAL rOuter = 8.0f, rInner = 3.2f;
-    Pen pen(kSecondary, 1.6f);
-    g.DrawEllipse(&pen, cx - rOuter, cy - rOuter, rOuter * 2, rOuter * 2);
-    Pen pen2(kSecondary, 1.6f);
-    g.DrawEllipse(&pen2, cx - rInner, cy - rInner, rInner * 2, rInner * 2);
-    for (int i = 0; i < 8; ++i) {
-        REAL a = (REAL)i * 3.14159265f / 4.0f;
-        REAL x1 = cx + cosf(a) * rOuter, y1 = cy + sinf(a) * rOuter;
-        REAL x2 = cx + cosf(a) * (rOuter + 3.0f), y2 = cy + sinf(a) * (rOuter + 3.0f);
-        g.DrawLine(&pen, x1, y1, x2, y2);
-    }
+    DrawGlyph(g, L"\uE713", rc, 17.0f, kSecondary);
+}
+
+static void DrawClose(Graphics& g, const RECT& rc, bool hover) {
+    if (hover) FillRound(g, rc, 6.0f, kControlHover, kBorder, 1.0f);
+    DrawGlyph(g, L"\uE8BB", rc, 11.0f, kSecondary);
 }
 
 static void DrawSettingsOverlay(Graphics& g) {
@@ -342,7 +351,7 @@ static void DrawSettingsOverlay(Graphics& g) {
     DrawStr(g, L"设置", tr, 15.0f, kText, true);
 
     if (g_hover == IDC_SETTINGS_CLOSE) FillRound(g, g_rcSetClose, 4.0f, kControlHover, kBorder, 1.0f);
-    DrawStr(g, L"✕", g_rcSetClose, 12.0f, kSecondary, false, true);
+    DrawGlyph(g, L"\uE8BB", g_rcSetClose, 10.0f, kSecondary);
 
     DrawToggleRow(g, g_rcSetNoLogin, L"屏蔽未登录弹窗", g_cfg.blockLogin, g_hover == IDC_TOGGLE_NOLOGIN);
     DrawToggleRow(g, g_rcSetAutostart, L"开机自启", g_cfg.autostart, g_hover == IDC_TOGGLE_AUTOSTART);
@@ -355,22 +364,41 @@ static void DrawSettingsOverlay(Graphics& g) {
 static void OnPaint(HWND hwnd) {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(hwnd, &ps);
+
+    // 分层窗口要逐像素 alpha，圆角边缘才能抗锯齿；GDI 的 BitBlt 只有 1 位透明
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+    bi.bmiHeader.biWidth = kW;
+    bi.bmiHeader.biHeight = -kH;                 // top-down
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+
+    void* bits = nullptr;
     HDC mem = CreateCompatibleDC(hdc);
-    HBITMAP bmp = CreateCompatibleBitmap(hdc, kW, kH);
+    HBITMAP bmp = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!bmp || !bits) {
+        DeleteDC(mem);
+        EndPaint(hwnd, &ps);
+        return;
+    }
     HGDIOBJ old = SelectObject(mem, bmp);
+    memset(bits, 0, (size_t)kW * kH * 4);
 
     Graphics g(mem);
     g.SetSmoothingMode(SmoothingModeAntiAlias);
     g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
 
+    // 圆角外的像素保持全透明，交给 DWM 合成
     SolidBrush bg(kWindowBg);
-    g.FillRectangle(&bg, 0, 0, kW, kH);
+    GraphicsPath bgp;
+    RoundPath(bgp, RectF(0, 0, (REAL)kW, (REAL)kH), (REAL)kCorner);
+    g.FillPath(&bg, &bgp);
 
     RECT tr{ 20, 6, kW - 56, 42 };
     DrawStr(g, L"BiliProxy", tr, 24.0f, kText, true);
     DrawGear(g, g_rcSettings, g_hover == IDC_BTN_SETTINGS);
-    if (g_hover == IDC_BTN_CLOSE) FillRound(g, g_rcClose, 4.0f, kControlHover, kBorder, 1.0f);
-    DrawStr(g, L"✕", g_rcClose, 13.0f, kSecondary, false, true);
+    DrawClose(g, g_rcClose, g_hover == IDC_BTN_CLOSE);
 
     DrawTabs(g);
 
@@ -381,8 +409,17 @@ static void OnPaint(HWND hwnd) {
     DrawStr(g, L"Made by Qxyz17", ft, 11.0f, kSecondary, false, false, true);
 
     if (g_settingsOpen) DrawSettingsOverlay(g);
+    g.Flush(FlushIntentionSync);
 
-    BitBlt(hdc, 0, 0, kW, kH, mem, 0, 0, SRCCOPY);
+    // 不传 pptDst 时窗口位置会跟着每次重绘漂，必须把窗口左上角一起给出
+    RECT wr{};
+    GetWindowRect(hwnd, &wr);
+    POINT dst{ wr.left, wr.top };
+    POINT src{ 0, 0 };
+    SIZE sz{ kW, kH };
+    BLENDFUNCTION bf{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+    UpdateLayeredWindow(hwnd, hdc, &dst, &sz, mem, &src, 0, &bf, ULW_ALPHA);
+
     SelectObject(mem, old);
     DeleteObject(bmp);
     DeleteDC(mem);
@@ -668,6 +705,12 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return HTCLIENT;
         }
 
+        case WM_MOVE:
+        case WM_SIZE:
+            // 分层窗口移动后位图留在旧坐标，得重新提交一次
+            InvalidateRect(h, nullptr, FALSE);
+            return 0;
+
         case WM_CLOSE:
             ShowWindow(h, SW_HIDE);
             return 0;
@@ -695,7 +738,7 @@ bool CreateMainWindow(HINSTANCE hInst, bool show) {
     RegisterClassExW(&wc);
 
     int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
-    g_hwnd = CreateWindowExW(WS_EX_TOPMOST, L"BiliProxyWnd", L"BiliProxy", WS_POPUP,
+    g_hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED, L"BiliProxyWnd", L"BiliProxy", WS_POPUP,
                              (sw - kW) / 2, (sh - kH) / 2, kW, kH,
                              nullptr, nullptr, hInst, nullptr);
     if (!g_hwnd) return false;
